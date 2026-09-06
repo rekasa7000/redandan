@@ -198,6 +198,37 @@ redandan/
   ├── AGENTS.md
   ├── PLANNING.md
   ├── bun.lock
+  ├── apps/
+  │   └── server/                           ← @redandan/server (Go + Gin)
+  │       ├── cmd/
+  │       │   └── main.go                   ← Entry point, graceful shutdown
+  │       ├── internal/
+  │       │   ├── config/
+  │       │   │   └── config.go             ← Env var loading, Config struct
+  │       │   ├── db/
+  │       │   │   └── db.go                 ← MongoDB singleton (sync.Once)
+  │       │   ├── models/
+  │       │   │   └── models.go             ← Bson/json document structs
+  │       │   ├── middleware/
+  │       │   │   ├── auth.go               ← RequireAuth, RequirePending, RequireCron
+  │       │   │   └── cors.go               ← CORS + StripTrailingSlash
+  │       │   ├── handlers/
+  │       │   │   ├── handler.go            ← Base Handler struct
+  │       │   │   ├── auth.go               ← Two-step login, TOTP, backup codes
+  │       │   │   ├── tasks.go              ← Full CRUD
+  │       │   │   ├── contexts.go           ← Full CRUD
+  │       │   │   ├── events.go             ← Full CRUD
+  │       │   │   ├── credentials.go        ← Zero-knowledge vault CRUD
+  │       │   │   ├── notifications.go      ← List, mark-read, push subscribe
+  │       │   │   └── cron.go               ← Cron job handler
+  │       │   └── routes/
+  │       │       └── routes.go             ← Route registration with middleware
+  │       ├── .air.toml                     ← Hot-reload config (air)
+  │       ├── .env.example                  ← Server-specific env vars
+  │       ├── Dockerfile                    ← Multi-stage build for Railway/Fly.io
+  │       ├── go.mod
+  │       ├── go.sum
+  │       └── Makefile                      ← dev, build, run, tidy targets
   └── package.json                          ← Workspace root
 ```
 
@@ -248,6 +279,12 @@ The `vercel.json` for cron jobs lives inside `apps/web/`.
 | `apps/web/middleware.ts` | Edge middleware — redirects unauthenticated requests away from `(app)` routes. |
 | `apps/web/vercel.json` | Vercel Cron Job: calls `/api/cron/notify` daily at 8am. |
 | `package.json` (root) | Workspace root. Scripts delegate to `apps/web`. Prettier lives here. |
+| `apps/server/cmd/main.go` | Go entry point. Loads config, connects MongoDB, registers routes, runs with graceful shutdown. |
+| `apps/server/internal/config/config.go` | Reads all env vars; panics on missing required vars so misconfiguration fails fast. |
+| `apps/server/internal/db/db.go` | MongoDB singleton — connect once, reuse across handlers. |
+| `apps/server/internal/middleware/auth.go` | JWT validation. `RequireAuth` (access token), `RequirePending` (step-1 token), `RequireCron` (secret). |
+| `apps/server/internal/handlers/auth.go` | Two-step login: password → pending JWT → TOTP → access JWT. Also TOTP setup and backup codes. |
+| `apps/server/internal/routes/routes.go` | Single source of truth for all routes and which middleware protects each group. |
 
 ---
 
