@@ -1,6 +1,6 @@
 # Security
 
-Security is a first-class concern in Redandan — especially for the password vault module.
+Security is a first-class concern in Redandan — especially for the password vault and authentication.
 This document covers the threat model, the mitigations, and the rules that must not be broken.
 
 ---
@@ -12,30 +12,71 @@ Redandan is a personal app with one user. The relevant threats are:
 | Threat | Likelihood | Impact |
 |---|---|---|
 | Unauthorized access to the web app | Medium | High — all data exposed |
+| Password stolen or guessed | Low-Medium | Mitigated by TOTP (single factor not enough) |
+| TOTP code intercepted or stolen | Very Low | High — valid only for 30 seconds |
 | Database breach (MongoDB Atlas) | Low | Critical for vault if not encrypted |
-| API abuse via the browser extension | Low | High |
-| Session token theft | Low | High |
+| Bearer token stolen (extension/mobile) | Low | High — full API access |
+| Session cookie stolen | Low | High — full web access |
 | Cron endpoint triggered by attacker | Low | Low (only sends notifications) |
 | Weak master password for vault | Medium (user error) | Critical — vault decryptable |
+| Authenticator app + backup codes both lost | Low (user error) | Account lockout |
 
 ---
 
-## Authentication
+## Authentication — Two-Factor (Password + TOTP)
 
-**How it works:**
-- Auth.js (NextAuth v5) manages session lifecycle
-- Sessions are JWT-based (signed, not encrypted by default — the secret is `AUTH_SECRET`)
-- Credential provider compares submitted password against the bcrypt hash in MongoDB
-- Middleware runs at the Vercel Edge and redirects unauthenticated requests to `/login`
+Authentication requires **two independent factors** on every login. Passing one does not grant access.
+
+### Step 1 — Password
+
+- The stored password is hashed using **bcrypt** (cost factor 12) in the `users` collection
+- On login, the submitted password is compared with `bcrypt.compare()`
+- A failed password check returns `401` with no information about which factor failed
+- After 5 failed attempts within 15 minutes, the login endpoint rate-limits the IP (implementation: sliding window counter in MongoDB or Upstash Redis)
+
+### Step 2 — TOTP (Time-Based One-Time Password)
+
+- The user opens their authenticator app (Google Authenticator, Authy, etc.) and enters the 6-digit code
+- The server validates using `otplib.authenticator.verify({ token, secret })`
+- TOTP codes are valid for ±1 time step (30 seconds) to account for clock drift
+- A valid TOTP code from the current window is accepted once only (replay prevention via a "used token" cache)
+- After 5 failed TOTP attempts, the same rate limit applies as for passwords
+
+### Session / Token Issuance
+
+After both factors pass:
+
+| Client | Auth artifact | Storage | Expiry |
+|---|---|---|---|
+| Web browser | Auth.js session cookie (HttpOnly, Secure, SameSite=Lax) | Browser cookie jar | 30 days |
+| Browser extension | Signed JWT bearer token | `chrome.storage.local` | 30 days |
+| Mobile app | Signed JWT bearer token | Capacitor SecureStorage | 30 days |
+
+All tokens are signed with `AUTH_SECRET`. They are not encrypted — the payload is readable but tamper-proof.
+
+### TOTP Setup (One-Time)
+
+1. A random 20-byte TOTP secret is generated server-side using `otplib.authenticator.generateSecret()`
+2. The secret is stored encrypted in the `users` collection (AES-256 with a key derived from `AUTH_SECRET`)
+3. A QR code is generated using the `qrcode` library and displayed in the settings page
+4. The user scans the QR code with their authenticator app
+5. The user enters a verification code to confirm setup is working
+6. 10 single-use backup codes are generated and shown once — the user must save them offline
+
+### Backup Codes
+
+- Generated at TOTP setup time using `crypto.randomBytes()`
+- Each code is 10 characters, alphanumeric, formatted as `XXXXX-XXXXX`
+- Stored as bcrypt hashes in the `users.backupCodes` array (plaintext never stored)
+- Using a backup code marks it as consumed — it cannot be used again
+- After all backup codes are exhausted, new ones can be generated (requires TOTP to do so)
+- If the authenticator app and all backup codes are lost, recovery requires direct database access
 
 **Rules:**
-- `AUTH_SECRET` must be a long, random string (32+ characters). Generate with: `openssl rand -base64 32`
-- The seeded password must be strong — use a password manager (Redandan itself, eventually)
+- `AUTH_SECRET` must be a long, random string (32+ characters). Generate: `openssl rand -base64 32`
+- The seeded password must be strong and unique
 - Never commit `.env.local` or expose `AUTH_SECRET` in client-side code
-
-**Session expiry:**
-- Sessions expire after 30 days by default (Auth.js default)
-- Extension tokens follow the same JWT lifetime
+- Store backup codes offline — printed or in a physically secure location
 
 ---
 
@@ -76,8 +117,8 @@ User opens vault
 1. **Never add server-side decryption logic.** The API returns ciphertext and that's it.
 2. **Never log credential plaintext** anywhere — not in API routes, not in the browser console.
 3. **Never store the master password or derived key in localStorage or a cookie.** Memory only.
-4. **The browser extension must implement the same decryption logic** — never send the key to the extension from the web app.
-5. **If the master password is lost, the vault data is unrecoverable.** This is by design. Document the master password in a secure offline location.
+4. **The browser extension must implement the same decryption logic** — never send the key from the web app to the extension.
+5. **If the master password is lost, the vault data is unrecoverable.** This is by design. Store the master password in a secure offline location.
 
 ### Cryptographic Parameters
 
@@ -97,33 +138,54 @@ These parameters are defined in `lib/crypto.ts` and must not be changed without 
 
 ## API Security
 
-**Session validation:**
-Every API route handler begins with:
+### Caller Validation
+
+Every API route handler calls `validateCaller(request)` from `lib/auth.ts` before any other logic.
+This function accepts either a session cookie or a bearer token:
+
 ```ts
-const session = await auth()
-if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+// lib/auth.ts
+export async function validateCaller(request: Request) {
+  // Try bearer token first (extension, mobile)
+  const authHeader = request.headers.get('authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    return verifyJwt(token) // throws if invalid
+  }
+  // Fall back to session cookie (web)
+  const session = await auth()
+  if (!session) throw new Error('Unauthorized')
+  return session
+}
 ```
 
-**Zod validation:**
+A route handler that does not call `validateCaller()` is a security bug.
+
+### Zod Validation
+
 Every POST/PATCH request body is parsed through a Zod schema before touching the database.
-Invalid input is rejected with a `400` before any DB operation.
+Invalid input is rejected with a `400` before any DB operation runs.
 
-**MongoDB injection prevention:**
-The native MongoDB driver uses typed query objects — it does not interpolate strings into queries. There is no equivalent of SQL injection via query strings. However:
+### MongoDB Safety
+
+The native MongoDB driver uses typed query objects — there is no SQL injection equivalent.
+However:
 - Never use `eval` or dynamic key construction with user input
-- Always use `new ObjectId(id)` with a try/catch to handle invalid IDs
+- Always use `new ObjectId(id)` wrapped in a try/catch — invalid ObjectId strings throw
 
-**CORS:**
-Next.js API routes restrict access to same-origin by default.
-The browser extension is the only external client — it is whitelisted via `CORS` headers on credentials routes.
+### CORS
+
+CORS headers are set on all `/api/**` routes. Allowed origins:
+- Same origin (web frontend, implicit)
+- `chrome-extension://<extension-id>` (added after extension build)
+- Capacitor WebView origin (configured in `ALLOWED_ORIGINS` env var)
+
+Preflight (`OPTIONS`) requests are handled and return the correct headers.
 
 ---
 
 ## Cron Endpoint Protection
 
-The `/api/cron/notify` endpoint must not be callable by anyone except Vercel's cron system.
-
-Protection:
 ```ts
 const authHeader = request.headers.get('authorization')
 if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -132,27 +194,28 @@ if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
 ```
 
 - `CRON_SECRET` is a long random string set in Vercel's environment variables
-- Vercel Cron automatically sends this header when configured in `vercel.json`
+- Vercel Cron sends this header automatically when configured in `vercel.json`
+- This endpoint does not use `validateCaller()` — it uses its own distinct secret
 
 ---
 
-## Extension Token Security
+## Bearer Token Security (Extension / Mobile)
 
-The browser extension stores the Auth.js session token in `chrome.storage.local`.
-
-Rules:
-- The token is a short-lived JWT (respect the session expiry)
-- Extension popup must re-authenticate if the token is expired
-- Never expose the token in the extension's UI or logs
-- The extension should only request credentials from the API — never write or delete without explicit user action
+- Tokens are signed JWTs using `AUTH_SECRET` as the signing key
+- Payload contains only: `{ sub: userId, iat, exp }`
+- Expiry: 30 days (same as web session)
+- The extension refreshes the token silently via the background service worker before expiry
+- Tokens are non-revocable (stateless JWT) — if a token is compromised, wait for expiry or rotate `AUTH_SECRET` (invalidates all tokens)
+- Never log tokens in the extension UI or service worker console
 
 ---
 
 ## Transport Security
 
-- All traffic is HTTPS — Vercel enforces this (HTTP redirects to HTTPS)
+- All traffic is HTTPS — Vercel enforces this (HTTP redirects to HTTPS automatically)
 - MongoDB Atlas enforces TLS on all connections
 - VAPID push notifications are signed — push services verify the server identity
+- Capacitor app uses HTTPS for all API calls (`cleartext: false` in `capacitor.config.ts`)
 
 ---
 
@@ -161,7 +224,8 @@ Rules:
 | File | Status | Notes |
 |---|---|---|
 | `.env.local` | Gitignored | Contains all secrets |
-| `.env.example` | Committed | Contains keys with empty values only |
+| `.env.example` | Committed | Keys with empty values only |
 | `bun.lock` | Committed | Not sensitive |
-| `lib/crypto.ts` | Committed | Contains algorithm, not keys |
+| `lib/crypto.ts` | Committed | Algorithm constants only, no keys |
+| `lib/auth.ts` | Committed | Logic only — secrets come from env |
 | `scripts/seed.ts` | Committed | Reads secrets from env, not hardcoded |

@@ -1,26 +1,127 @@
 # API Reference
 
 All API routes are Next.js Route Handlers under `app/api/`.
-All routes except `/api/auth/**` require a valid session (Auth.js JWT cookie).
 All responses are `Content-Type: application/json`.
-
----
 
 ## Authentication
 
+Every protected route accepts **either** of the following. Both are equally valid:
+
+| Method | Sent by | Header / Cookie |
+|---|---|---|
+| Session cookie | Web browser (automatic) | `Cookie: next-auth.session-token=...` |
+| Bearer token | Extension, Mobile | `Authorization: Bearer <jwt>` |
+
+The `validateCaller()` helper in `lib/auth.ts` handles both methods transparently.
+A route that does not call `validateCaller()` is a security bug.
+
+---
+
+## Auth Endpoints
+
+### `POST /api/auth/login`
+Step 1 of login. Validates username + password.
+
+Request body:
+```json
+{ "username": "string", "password": "string" }
+```
+
+Response on success: `200 { "totpRequired": true }`
+Response on failure: `401 { "error": "Invalid credentials" }`
+
+Does **not** issue a session yet. TOTP must be completed first.
+
+---
+
+### `POST /api/auth/totp/validate`
+Step 2 of login. Validates the TOTP code and issues the session or token.
+
+Request body:
+```json
+{
+  "code": "123456",
+  "clientType": "web | extension | mobile"
+}
+```
+
+Response for `web`:
+```json
+{ "ok": true }
+```
+Plus an HttpOnly session cookie is set on the response.
+
+Response for `extension` / `mobile`:
+```json
+{ "token": "<signed JWT>" }
+```
+
+Response on failure: `401 { "error": "Invalid code" }`
+
+Rate limited: 5 failed attempts per 15 minutes per IP.
+
+---
+
+### `POST /api/auth/logout`
+Invalidates the session cookie (web). For extension/mobile, the client discards the token locally.
+
+Response: `200 { "ok": true }`
+
+---
+
+### `GET /api/auth/totp/setup`
+Generates a new TOTP secret and returns the QR code data.
+**Requires active session** — called from the settings page.
+
+Response:
+```json
+{
+  "qrCodeDataUrl": "data:image/png;base64,...",
+  "secret": "BASE32SECRET",
+  "backupCodes": ["XXXXX-XXXXX", "..."]
+}
+```
+
+The secret and backup code hashes are stored in the `users` collection.
+Backup codes are shown only once — the user must save them.
+
+---
+
+### `POST /api/auth/totp/confirm`
+Confirms TOTP setup by verifying the user scanned the QR code correctly.
+Must be called after `GET /api/auth/totp/setup` to activate TOTP.
+
+Request body:
+```json
+{ "code": "123456" }
+```
+
+Response: `200 { "confirmed": true }` or `400 { "error": "Invalid code" }`
+
+---
+
+### `POST /api/auth/backup-code`
+Uses a backup code in place of a TOTP code during login step 2.
+
+Request body:
+```json
+{ "code": "XXXXX-XXXXX" }
+```
+
+Response: same as `POST /api/auth/totp/validate` — issues session or token.
+The used backup code is immediately invalidated.
+
+---
+
 ### `GET|POST /api/auth/[...nextauth]`
-Handled entirely by Auth.js. Endpoints:
-- `POST /api/auth/signin` — sign in with credentials
-- `POST /api/auth/signout` — sign out
-- `GET /api/auth/session` — get current session
-- `GET /api/auth/csrf` — CSRF token
+Handled by Auth.js for internal session management. Not called directly by clients.
 
 ---
 
 ## Tasks
 
 ### `GET /api/tasks`
-Returns all tasks, optionally filtered.
+Returns tasks, optionally filtered.
 
 Query params:
 | Param | Type | Description |
@@ -29,8 +130,8 @@ Query params:
 | `status` | string | `todo`, `in_progress`, `done`, `archived` |
 | `priority` | string | `low`, `medium`, `high`, `urgent` |
 | `tag` | string | Filter by tag |
-| `dueToday` | boolean | Returns tasks with deadline today |
-| `overdue` | boolean | Returns tasks past deadline |
+| `dueToday` | boolean | Tasks with deadline = today |
+| `overdue` | boolean | Tasks past deadline, not done |
 
 Response:
 ```json
@@ -51,8 +152,6 @@ Response:
 }
 ```
 
----
-
 ### `POST /api/tasks`
 Creates a new task.
 
@@ -72,30 +171,17 @@ Request body:
 }
 ```
 
-Response: `201 Created` with the created task document.
-
----
+Response: `201` with the created task document.
 
 ### `GET /api/tasks/[id]`
-Returns a single task by ObjectId.
-
-Response: `200` with task, or `404` if not found.
-
----
+Returns a single task. `404` if not found.
 
 ### `PATCH /api/tasks/[id]`
-Partial update of a task. Send only the fields to change.
-
-Request body: any subset of task fields.
-
-Response: `200` with updated task.
-
----
+Partial update. Send only the fields to change.
+Response: `200` with the updated task.
 
 ### `DELETE /api/tasks/[id]`
-Deletes a task.
-
-Response: `200 { "deleted": true }`, or `404`.
+Deletes a task. Response: `200 { "deleted": true }`.
 
 ---
 
@@ -105,9 +191,6 @@ Response: `200 { "deleted": true }`, or `404`.
 Returns all contexts, sorted by `order`.
 
 ### `POST /api/contexts`
-Creates a new context.
-
-Request body:
 ```json
 {
   "name": "string",
@@ -123,31 +206,21 @@ Request body:
 Updates a context.
 
 ### `DELETE /api/contexts/[id]`
-Deletes a context. Reassigns orphaned tasks to a default context.
+Deletes a context. Orphaned tasks are reassigned to a default "General" context.
 
 ---
 
 ## Events
 
 ### `GET /api/events`
-Returns events, optionally filtered by date range.
-
-Query params:
-| Param | Type | Description |
-|---|---|---|
-| `from` | ISO date | Start of range |
-| `to` | ISO date | End of range |
-| `type` | string | `payroll`, `vacation`, `deadline`, etc. |
+Query params: `from` (ISO date), `to` (ISO date), `type` (string).
 
 ### `POST /api/events`
-Creates a new event.
-
-Request body:
 ```json
 {
   "title": "string",
   "type": "payroll | vacation | deadline | appointment | custom",
-  "contextId": "ObjectId string (optional)",
+  "contextId": "ObjectId (optional)",
   "date": "ISO date string",
   "endDate": "ISO date string (optional)",
   "allDay": true,
@@ -157,23 +230,16 @@ Request body:
 ```
 
 ### `PATCH /api/events/[id]`
-Updates an event.
-
 ### `DELETE /api/events/[id]`
-Deletes an event.
 
 ---
 
 ## Credentials (Password Vault)
 
-### `GET /api/credentials`
-Returns all credentials. **Encrypted fields are returned as-is — no server-side decryption.**
+**The server never decrypts credential data. All encrypted fields are stored and returned verbatim.**
 
-Query params:
-| Param | Type | Description |
-|---|---|---|
-| `site` | string | Filter by siteUrl (for extension domain lookup) |
-| `tag` | string | Filter by tag |
+### `GET /api/credentials`
+Query params: `site` (string, for domain matching), `tag` (string).
 
 Response:
 ```json
@@ -195,9 +261,6 @@ Response:
 ```
 
 ### `POST /api/credentials`
-Stores a new encrypted credential.
-
-Request body:
 ```json
 {
   "site": "string",
@@ -212,33 +275,22 @@ Request body:
 }
 ```
 
-The server never decrypts, modifies, or re-encrypts this data. It stores it verbatim.
-
 ### `GET /api/credentials/[id]`
-Returns a single credential (still encrypted).
+Returns a single credential (ciphertext only).
 
 ### `PATCH /api/credentials/[id]`
-Updates a credential. The client must re-encrypt before sending.
+Updates a credential. The client must re-encrypt before sending updated fields.
 
 ### `DELETE /api/credentials/[id]`
-Deletes a credential permanently.
 
 ---
 
 ## Notifications
 
 ### `GET /api/notifications`
-Returns notification history.
-
-Query params:
-| Param | Type | Description |
-|---|---|---|
-| `read` | boolean | Filter by read status |
-| `limit` | number | Max results (default 50) |
+Query params: `read` (boolean), `limit` (number, default 50).
 
 ### `PATCH /api/notifications/[id]`
-Marks a notification as read.
-
 Request body: `{ "read": true }`
 
 ---
@@ -246,13 +298,11 @@ Request body: `{ "read": true }`
 ## Push Notifications
 
 ### `POST /api/push/subscribe`
-Saves a browser push subscription for the user.
-
-Request body: the `PushSubscription` object from `navigator.serviceWorker.pushManager.subscribe()`.
+Saves a browser push subscription.
+Request body: `PushSubscription` object from `navigator.serviceWorker.pushManager.subscribe()`.
 
 ### `POST /api/push/send`
-Internal route — triggers a push notification manually.
-Protected by session (not for external use).
+Internal — triggers a push notification manually. Protected by session.
 
 ---
 
@@ -260,35 +310,46 @@ Protected by session (not for external use).
 
 ### `GET /api/cron/notify`
 Called by Vercel Cron Job daily at 8:00 AM.
-
-**Protected by `CRON_SECRET` header — not a user-facing endpoint.**
+**Not a user-facing endpoint.**
 
 Required header: `Authorization: Bearer <CRON_SECRET>`
 
 Logic:
-1. Find tasks with `deadline = today` or overdue
-2. Find events within 2 days (payroll, travel, etc.)
+1. Find tasks due today or overdue
+2. Find events within 2 days
 3. Send Web Push to all stored subscriptions
-4. Log to `notifications` collection
+4. Log sent notifications to the `notifications` collection
 
-Response: `200 { "sent": 5 }` or `401` if secret is missing/invalid.
+Response: `200 { "sent": 5 }` or `403` if the secret is wrong.
 
 ---
 
 ## Error Responses
 
-All errors follow this shape:
-
+All errors:
 ```json
-{
-  "error": "Human-readable error message"
-}
+{ "error": "Human-readable message" }
 ```
 
 | Status | Meaning |
 |---|---|
 | `400` | Invalid request body (Zod validation failed) |
-| `401` | Not authenticated |
-| `403` | Authenticated but not authorized (wrong secret) |
+| `401` | Not authenticated or TOTP failed |
+| `403` | Authenticated but forbidden (wrong secret, consumed backup code, etc.) |
 | `404` | Resource not found |
+| `429` | Rate limited (too many failed auth attempts) |
 | `500` | Internal server error |
+
+---
+
+## CORS Headers
+
+All `/api/**` routes include:
+```
+Access-Control-Allow-Origin: <value from ALLOWED_ORIGINS env var>
+Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS
+Access-Control-Allow-Headers: Content-Type, Authorization
+Access-Control-Max-Age: 86400
+```
+
+Preflight `OPTIONS` requests return `204` with these headers.

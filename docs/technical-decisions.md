@@ -62,19 +62,21 @@ Encrypt and decrypt credentials entirely on the client using the Web Crypto API.
 The app needs authentication. Options: Auth.js (NextAuth v5), custom JWT implementation, Clerk, Supabase Auth.
 
 **Decision:**
-Use Auth.js (NextAuth v5) with a credentials provider.
+Use Auth.js (NextAuth v5) with a credentials provider for the web client.
+A separate custom JWT endpoint (`POST /api/auth/token`) handles non-cookie clients.
 
 **Reasoning:**
 - Clerk and Supabase Auth are third-party services — unnecessary dependency for a personal app
 - A fully custom JWT implementation is error-prone (token rotation, CSRF, secure cookies)
 - Auth.js integrates natively with Next.js App Router and middleware
-- The credentials provider supports username/password, which is all that's needed
+- The credentials provider supports username/password + TOTP as a two-step flow
 - JWT sessions (not database sessions) work well with Vercel's stateless serverless functions
+- The extension and mobile cannot use cookies reliably, so they get a separate bearer token endpoint that reuses the same validation logic
 
 **Consequences:**
 - User is seeded into the database at setup — no registration flow
 - Session is available server-side via `auth()` and client-side via `useSession()`
-- Password reset flow needs to be built manually if ever needed (currently out of scope)
+- API routes must handle both cookie sessions and bearer tokens (via a shared `validateCaller()` helper)
 
 ---
 
@@ -192,3 +194,70 @@ Use route groups: `(auth)` for public auth pages, `(app)` for all protected page
 **Consequences:**
 - All pages must be placed under the correct route group
 - Middleware must maintain an updated list of public routes (or use a path-based pattern)
+
+---
+
+## ADR-009: Standalone API Design — Server Independent of Clients
+
+**Status:** Decided
+
+**Context:**
+The project has three client surfaces (web, extension, mobile). The initial design treated the Next.js
+API routes as tightly coupled to the web frontend. The question: should the API be designed as a
+proper standalone backend that any client can consume independently?
+
+**Decision:**
+The API (`/app/api/**`) is the standalone backend. All three clients consume it identically via REST.
+The web frontend is not privileged — it does not have special server-side data access that mobile or
+extension cannot replicate. Any new client can be built by implementing the auth flow and calling the
+same REST endpoints.
+
+**Reasoning:**
+- A single user personal app with three frontends naturally benefits from a clean server/client split
+- If a fourth client is ever needed (CLI, desktop app, another mobile platform), zero server changes are required
+- Forces better API design — endpoints must be self-contained, documented, and not assume client context
+- Separates concerns clearly: the server owns data and business logic, clients own presentation
+- Aligns with the long-term potential of the project becoming a multi-client platform
+
+**Consequences:**
+- Web Server Components may still call MongoDB directly as an internal optimization (RSC)
+  but this is treated as an implementation detail, not as the "API" for the web client
+- API routes must accept both session cookies (web) and bearer tokens (extension/mobile)
+  via a shared `validateCaller(request)` helper in `lib/auth.ts`
+- CORS must be configured properly on all API routes
+- API documentation (`docs/api.md`) is the authoritative contract
+
+---
+
+## ADR-010: TOTP (Authenticator App) as Mandatory Second Factor
+
+**Status:** Decided
+
+**Context:**
+The app holds sensitive personal data — tasks, calendar events, and an encrypted password vault.
+A password alone is a single point of failure: if the password is guessed, phished, or leaked,
+everything is exposed. The question: require a second factor, and if so, which kind?
+
+Options: SMS OTP, email OTP, TOTP (authenticator app), hardware key (WebAuthn/FIDO2), passkeys.
+
+**Decision:**
+Require TOTP (Time-based One-Time Password) as a mandatory second factor on every login, for all
+clients. Implemented server-side with `otplib`. Setup via a QR code scanned into Google Authenticator,
+Authy, or any TOTP-compatible app.
+
+**Reasoning:**
+- SMS OTP requires a phone number and a third-party SMS provider — unnecessary infrastructure
+- Email OTP requires access to email during login — circular dependency if email credentials are in the vault
+- TOTP is offline — the authenticator app generates codes without internet or servers
+- TOTP is widely supported — any TOTP app (Google Authenticator, Authy, Bitwarden, 1Password) works
+- WebAuthn / passkeys are the most secure option but add implementation complexity;
+  TOTP is the pragmatic high-security choice for a personal app
+- `otplib` is a well-maintained, standards-compliant library; no need to implement RFC 6238 manually
+
+**Consequences:**
+- Login is a two-step flow: (1) password → (2) TOTP code
+- The TOTP secret is generated once at setup and stored encrypted in the `users` collection
+- Backup codes are generated at setup (10 single-use codes) and must be stored offline by the user
+- The login page must handle the two-step UI gracefully
+- The extension and mobile login popups must also implement the two-step flow
+- If the authenticator app and backup codes are both lost, account access requires manual DB intervention

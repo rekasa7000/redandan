@@ -12,9 +12,11 @@
 | UI Library | shadcn/ui | latest | Component library on top of Radix |
 | Styling | Tailwind CSS | 4.x | Utility-first CSS |
 | Auth | Auth.js (NextAuth) | v5 | Session management, credential provider |
+| 2FA | otplib | latest | TOTP generation and validation (RFC 6238) |
+| QR Code | qrcode | latest | QR code generation for TOTP setup |
 | Validation | Zod | 3.x | Schema validation on client and server |
 | Icons | Lucide React | latest | Icon set |
-| Crypto | Web Crypto API | native | Client-side AES-GCM encryption |
+| Crypto | Web Crypto API | native | Client-side AES-GCM encryption for vault |
 | Push | web-push | latest | VAPID-based Web Push notifications |
 | Package Manager | bun | latest | Fast installs and script runner |
 | Linting | ESLint | 9.x | Code quality |
@@ -28,14 +30,14 @@
 
 ## Framework — Next.js 16 (App Router)
 
-Next.js was chosen because it handles both the frontend and the backend in one project. The App Router (introduced in Next.js 13, now mature) enables:
+Next.js handles both the frontend and the standalone API in one project. The App Router enables:
 
 - **React Server Components** — fetch data on the server, ship less JS to the client
 - **Route Handlers** — the API backend, replacing Express entirely
 - **Middleware** — runs at the edge for auth checks before any page or API route
 - **File-based routing** — predictable, organized structure
 
-There is no separate Express backend. No separate Fastify server. One `next dev` runs everything.
+The API is designed as a standalone backend (see ADR-009). The web frontend is one of three clients.
 
 ---
 
@@ -53,15 +55,35 @@ The **native `mongodb` driver** is used directly. No Mongoose, no Prisma, no Dri
 
 ---
 
-## Auth — Auth.js (NextAuth v5)
+## Auth — Auth.js (NextAuth v5) + Custom Bearer Tokens
 
-Auth.js provides:
-- **Credential provider** — username/password login backed by MongoDB
-- **JWT sessions** — stateless, works well with Vercel's serverless environment
+Auth.js manages the web session lifecycle:
+- **Credential provider** — username/password + TOTP as a two-step flow
+- **JWT sessions** — stateless, works with Vercel's serverless environment
 - **Middleware integration** — `middleware.ts` uses Auth.js to protect all `(app)` routes
-- **TypeScript-first** — fully typed session object
 
-No social login is needed for a personal app. The single user is seeded into the database on first deploy.
+For non-web clients (extension, mobile), a separate `POST /api/auth/totp/validate` endpoint issues a signed JWT bearer token after both auth factors pass. The token is validated by `lib/auth.ts` on every API call.
+
+Both auth paths use the same TOTP validation logic — there is no weaker path.
+
+---
+
+## 2FA — otplib (TOTP)
+
+`otplib` implements RFC 6238 (TOTP) and RFC 4226 (HOTP). Used for:
+- Generating the TOTP secret at setup time
+- Generating the `otpauth://` URI embedded in the QR code
+- Validating 6-digit codes submitted by the user during login
+
+TOTP is mandatory. It cannot be disabled. See `docs/security.md` for the full auth flow.
+
+---
+
+## QR Code — qrcode
+
+Used once during TOTP setup to render the authenticator QR code in the settings page.
+Generates a data URL (`data:image/png;base64,...`) from the `otpauth://` URI.
+Server-side only — the QR code is generated in an API route and sent to the client as a data URL.
 
 ---
 
@@ -70,9 +92,11 @@ No social login is needed for a personal app. The single user is seeded into the
 shadcn/ui is not a component library you install from npm — it's a collection of components you copy into your codebase and own. This means:
 - Full control over styling and behavior
 - No versioning conflicts with the component library
-- Components are already in `components/ui/` and can be customized freely
+- Components are in `components/ui/` and can be customized freely
 
-Tailwind CSS v4 (the version already configured) introduces a new Vite-based engine and CSS-first configuration (no `tailwind.config.js` needed).
+Tailwind CSS v4 introduces a CSS-first configuration (no `tailwind.config.js` needed).
+
+**Design constraint: no gradients.** Flat, solid colors from the theme only.
 
 ---
 
@@ -114,7 +138,8 @@ Web Push notifications allow the browser (and PWA) to receive notifications even
 
 ## Package Manager — bun
 
-The project uses bun (evidenced by `bun.lock`). Use `bun install`, `bun dev`, `bun build`, etc. Do not switch to npm or yarn.
+The project uses bun (evidenced by `bun.lock`). Use `bun install`, `bun dev`, `bun build`, etc.
+Never use npm, yarn, or pnpm.
 
 ---
 
