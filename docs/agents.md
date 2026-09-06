@@ -33,11 +33,7 @@ Returns the created document with a 201 status.
 Bad:
 ```
 add task api
-```
-```
 updated files
-```
-```
 fix
 ```
 
@@ -99,6 +95,44 @@ or any other ORM or ODM. This is a firm architectural decision (see ADR-001).
 - **Client:** The same Zod schema reused in form validation
 - Do not validate in the database layer or in component logic
 
+### API route structure — mandatory pattern
+Every API route handler must follow this exact order:
+
+```ts
+export async function GET(request: Request) {
+  // 1. Validate caller (session cookie OR bearer token)
+  const caller = await validateCaller(request)  // throws 401 if invalid
+
+  // 2. Validate request body / params (Zod)
+  const body = schema.parse(await request.json())
+
+  // 3. Business logic + DB access
+  const db = await getDb()
+  // ...
+
+  // 4. Return response
+  return Response.json({ ... })
+}
+```
+
+Never skip step 1. Never put DB logic before step 2.
+
+### Authentication — never bypass or weaken
+- The app uses two-factor authentication: password + TOTP. Both factors are always required.
+- Do not add a path to bypass TOTP "for development" or "for testing"
+- Do not create mock auth or skip TOTP in any code path, including scripts
+- The TOTP secret is stored encrypted in MongoDB — never store it in plaintext
+- `validateCaller()` in `lib/auth.ts` handles both session cookies (web) and bearer tokens
+  (extension/mobile) — always use this function, never roll your own auth check
+
+### Standalone API principle
+- The API (`/api/**`) must be client-agnostic. It must not return HTML, redirects, or
+  client-specific responses
+- Any data the web frontend needs must be available via the API, accessible to extension
+  and mobile with a bearer token too
+- Do not add server-side logic that only works for the web client and not for bearer token callers
+- See ADR-009 in `docs/technical-decisions.md`
+
 ### Password vault — client-side encryption only
 - Decryption logic must only exist in `lib/crypto.ts` and the browser extension
 - No server-side function may decrypt credential data
@@ -109,11 +143,6 @@ or any other ORM or ODM. This is a firm architectural decision (see ADR-001).
 ### Connection singleton
 - Always use `getDb()` from `lib/db.ts` — never instantiate `MongoClient` directly in a route
 - Never use `client.db()` outside of `lib/db.ts`
-
-### API route structure
-- Every route handler must check the session first, before any other logic
-- Return errors using `Response.json({ error: '...' }, { status: ... })`
-- Use the HTTP status codes defined in `docs/api.md`
 
 ### No unnecessary abstractions
 - Do not create utility functions, helpers, or wrappers for logic used only once

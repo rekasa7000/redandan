@@ -55,7 +55,10 @@ before inserting into MongoDB. Returns the created task document as JSON.
 
 - **No ORM.** Use only the native `mongodb` driver. No Mongoose, Prisma, or Drizzle. Ever.
 - **No `any`.** All code must be properly typed. If `any` is unavoidable, comment the reason.
-- **Validate with Zod** at the top of every API route before touching the database.
+- **`validateCaller()` first.** Every API route handler must call `validateCaller(request)` from `lib/auth.ts` as the very first step. It accepts both session cookies (web) and bearer tokens (extension/mobile).
+- **Validate with Zod** immediately after auth, before any DB access.
+- **TOTP is mandatory.** Never add a bypass, skip, or mock path for the two-factor auth flow. Both factors — password and TOTP — are always required.
+- **Standalone API.** The API must work identically for all clients. Do not add logic that only works for the web client and not for bearer token callers.
 - **Password vault is client-side only.** No server function may decrypt credentials. Master password never leaves the browser. See `docs/security.md`.
 - **Use `getDb()` from `lib/db.ts`** — never instantiate `MongoClient` directly in a route.
 - **No unnecessary abstractions.** Do not create helpers for one-time use.
