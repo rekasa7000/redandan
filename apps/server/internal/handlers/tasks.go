@@ -69,7 +69,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		Title       string    `json:"title" binding:"required"`
 		Description string    `json:"description"`
 		Priority    string    `json:"priority"`
-		DueDate     time.Time `json:"due_date"`
+		DueDate     *time.Time `json:"due_date"`
 		Tags        []string  `json:"tags"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {

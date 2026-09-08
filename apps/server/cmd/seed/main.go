@@ -41,7 +41,7 @@ func main() {
 		log.Fatalf("mongo ping: %v", err)
 	}
 
-	db := client.Database(dbName)
+	db    := client.Database(dbName)
 	users := db.Collection("users")
 
 	// Skip if a user already exists.
@@ -59,23 +59,26 @@ func main() {
 		log.Fatalf("bcrypt: %v", err)
 	}
 
-	_, err = users.InsertOne(ctx, bson.M{
+	now := time.Now()
+	res, err := users.InsertOne(ctx, bson.M{
 		"email":               email,
 		"password_hash":       string(hash),
 		"totp_secret":         "",
 		"totp_enabled":        false,
 		"totp_pending_secret": "",
 		"backup_codes":        []string{},
-		"created_at":          time.Now(),
+		"created_at":          now,
 	})
 	if err != nil {
 		log.Fatalf("insert user: %v", err)
 	}
 
+	userID := res.InsertedID.(bson.ObjectID)
+
 	_, err = db.Collection("contexts").InsertMany(ctx, []interface{}{
-		bson.M{"name": "Personal", "slug": "personal", "color": "#6366f1", "icon": "user",      "type": "personal", "order": 0, "created_at": time.Now(), "updated_at": time.Now()},
-		bson.M{"name": "Work",     "slug": "work",     "color": "#f59e0b", "icon": "briefcase", "type": "work",     "order": 1, "created_at": time.Now(), "updated_at": time.Now()},
-		bson.M{"name": "Health",   "slug": "health",   "color": "#10b981", "icon": "heart",     "type": "health",   "order": 2, "created_at": time.Now(), "updated_at": time.Now()},
+		bson.M{"user_id": userID, "name": "Personal", "slug": "personal", "color": "#6366f1", "icon": "user",      "type": "personal", "order": 0, "created_at": now, "updated_at": now},
+		bson.M{"user_id": userID, "name": "Work",     "slug": "work",     "color": "#f59e0b", "icon": "briefcase", "type": "work",     "order": 1, "created_at": now, "updated_at": now},
+		bson.M{"user_id": userID, "name": "Health",   "slug": "health",   "color": "#10b981", "icon": "heart",     "type": "health",   "order": 2, "created_at": now, "updated_at": now},
 	})
 	if err != nil {
 		log.Fatalf("insert contexts: %v", err)

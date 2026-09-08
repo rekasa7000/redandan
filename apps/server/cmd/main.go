@@ -24,11 +24,15 @@ func main() {
 
 	cfg := config.Load()
 
-	database, disconnect, err := db.Connect(cfg.MongoURI, cfg.DBName)
+	client, err := db.Connect(cfg.MongoURI)
 	if err != nil {
 		log.Fatalf("mongodb: failed to connect: %v", err)
 	}
-	defer disconnect()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		client.Disconnect(ctx)
+	}()
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.DebugMode)
@@ -36,7 +40,7 @@ func main() {
 
 	r := gin.Default()
 
-	h := handlers.New(database, cfg)
+	h := handlers.New(client.Database(cfg.DBName), cfg)
 	routes.Register(r, h, cfg)
 
 	srv := &http.Server{

@@ -55,7 +55,7 @@ func (h *Handler) CreateEvent(c *gin.Context) {
 		Title       string    `json:"title" binding:"required"`
 		Description string    `json:"description"`
 		StartTime   time.Time `json:"start_time" binding:"required"`
-		EndTime     time.Time `json:"end_time"`
+		EndTime     *time.Time `json:"end_time"`
 		AllDay      bool      `json:"all_day"`
 		ContextID   string    `json:"context_id"`
 	}
@@ -79,7 +79,7 @@ func (h *Handler) CreateEvent(c *gin.Context) {
 	if body.ContextID != "" {
 		cid, err := bson.ObjectIDFromHex(body.ContextID)
 		if err == nil {
-			event.ContextID = cid
+			event.ContextID = &cid
 		}
 	}
 

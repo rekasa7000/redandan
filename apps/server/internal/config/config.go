@@ -19,10 +19,10 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		MongoURI:        mustGetEnv("MONGODB_URI"),
+		MongoURI:        mustGetEnv("MONGO_URI"),
 		DBName:          getEnv("DB_NAME", "reliva"),
 		JWTSecret:       mustGetEnv("JWT_SECRET"),
-		ServerPort:      getEnv("PORT", "8080"),
+		ServerPort:      getEnv("SERVER_PORT", "8080"),
 		AllowedOrigins:  strings.Split(getEnv("ALLOWED_ORIGINS", "http://localhost:3000"), ","),
 		CronSecret:      getEnv("CRON_SECRET", ""),
 		VAPIDPublicKey:  getEnv("VAPID_PUBLIC_KEY", ""),
