@@ -62,24 +62,68 @@ components:
     # ── Auth ──────────────────────────────────────────────────
     LoginRequest:
       type: object
-      required: [password]
+      required: [email, password]
       properties:
+        email:
+          type: string
+          format: email
         password:
           type: string
 
-    PendingTokenResponse:
+    LoginResponse:
       type: object
+      description: |
+        When TOTP is configured: `{ pending_token, require_totp: true }`.
+        When TOTP is not yet set up (first login): `{ token, require_totp: false }`.
       properties:
+        token:
+          type: string
+          description: Full access token (30 days). Only present when `require_totp` is false.
         pending_token:
           type: string
-          description: Short-lived JWT (5 min). Use on TOTP / backup-code endpoints.
+          description: Short-lived JWT (5 min). Only present when `require_totp` is true.
+        require_totp:
+          type: boolean
 
-    AccessTokenResponse:
+    TokenResponse:
+      type: object
+      description: Full access token returned after successful TOTP or backup-code verification.
+      properties:
+        token:
+          type: string
+          description: Long-lived JWT (30 days). Use as Bearer on all protected routes.
+
+    MeResponse:
       type: object
       properties:
-        access_token:
+        email:
           type: string
-          description: Long-lived JWT (30 days). Use as Bearer token on all protected routes.
+        totp_enabled:
+          type: boolean
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+          minLength: 8
+
+    ForgotPasswordRequest:
+      type: object
+      required: [email, backup_code, new_password]
+      properties:
+        email:
+          type: string
+          format: email
+        backup_code:
+          type: string
+          description: One of the 12-character hex backup codes.
+        new_password:
+          type: string
+          minLength: 8
 
     TOTPCodeRequest:
       type: object
@@ -94,9 +138,12 @@ components:
     TOTPSetupResponse:
       type: object
       properties:
+        qr:
+          type: string
+          description: QR code as a PNG data URL (`data:image/png;base64,...`). Render directly in an <img> tag.
         uri:
           type: string
-          description: otpauth:// URI — encode this into a QR code for the authenticator app.
+          description: Raw otpauth:// URI — use if you need to generate a custom QR.
           example: "otpauth://totp/Reliva:user@example.com?secret=BASE32SECRET&issuer=Reliva"
         secret:
           type: string
@@ -465,7 +512,7 @@ paths:
 
   /api/v1/auth/login:
     post:
-      summary: Step 1 — verify password, receive pending token
+      summary: Step 1 — verify email + password
       tags: [Auth]
       security: []
       requestBody:
@@ -476,19 +523,22 @@ paths:
               $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
-          description: Password accepted. Use pending_token on the TOTP endpoint.
+          description: |
+            Credentials accepted.
+            If `require_totp` is true, send `pending_token` to the TOTP endpoint.
+            If `require_totp` is false, `token` is a full access token (TOTP setup needed).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PendingTokenResponse"
+                $ref: "#/components/schemas/LoginResponse"
         "400":
-          description: Missing password
+          description: Missing fields
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
-          description: Invalid password
+          description: Invalid credentials
           content:
             application/json:
               schema:
@@ -496,7 +546,7 @@ paths:
 
   /api/v1/auth/logout:
     post:
-      summary: Logout (stateless — client discards token)
+      summary: Logout (stateless — client clears token cookie)
       tags: [Auth]
       security: []
       responses:
@@ -506,6 +556,69 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/auth/me:
+    get:
+      summary: Get current user profile
+      tags: [Auth]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/auth/change-password:
+    post:
+      summary: Change the authenticated user's password
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/auth/forgot-password:
+    post:
+      summary: Reset password using a backup code (no email OTP)
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForgotPasswordRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "401":
+          description: Invalid credentials or backup code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/auth/totp/validate:
     post:
@@ -521,11 +634,11 @@ paths:
               $ref: "#/components/schemas/TOTPCodeRequest"
       responses:
         "200":
-          description: TOTP valid. Use access_token on all protected routes.
+          description: TOTP valid.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AccessTokenResponse"
+                $ref: "#/components/schemas/TokenResponse"
         "401":
           description: Invalid TOTP code or token
           content:
@@ -547,11 +660,11 @@ paths:
               $ref: "#/components/schemas/BackupCodeRequest"
       responses:
         "200":
-          description: Backup code accepted and burned. Returns access token.
+          description: Backup code accepted and burned.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AccessTokenResponse"
+                $ref: "#/components/schemas/TokenResponse"
         "401":
           description: Invalid backup code
           content:

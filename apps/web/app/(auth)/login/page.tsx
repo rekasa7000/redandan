@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Card,
@@ -21,6 +22,7 @@ type Step = "password" | "totp";
 export default function LoginPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("password");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -37,22 +39,20 @@ export default function LoginPage() {
       const res = await fetch(`${API}/api/v1/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error ?? "Invalid password");
+        setError(data.error ?? "Invalid credentials");
         return;
       }
 
       if (data.require_totp) {
-        // Go server issued a short-lived pending token; hold it in state
-        // so the second step can attach it as a Bearer token.
-        setPendingToken(data.token ?? "");
+        setPendingToken(data.pending_token);
         setStep("totp");
       } else {
-        // TOTP not yet set up — server issued full access token
+        // TOTP not yet configured — access token issued, go set it up.
         setToken(data.token);
         router.replace("/settings");
       }
@@ -104,10 +104,21 @@ export default function LoginPage() {
           <>
             <CardHeader>
               <CardTitle>Reliva</CardTitle>
-              <CardDescription>Enter your password to continue.</CardDescription>
+              <CardDescription>Sign in to your personal hub.</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handlePassword} className="flex flex-col gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoFocus
+                    required
+                  />
+                </div>
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="password">Password</Label>
                   <Input
@@ -115,14 +126,19 @@ export default function LoginPage() {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    autoFocus
                     required
                   />
                 </div>
                 {error && <p className="text-sm text-destructive">{error}</p>}
-                <Button type="submit" disabled={loading}>
+                <Button type="submit" disabled={loading} className="w-full">
                   {loading ? "Checking…" : "Continue"}
                 </Button>
+                <Link
+                  href="/forgot-password"
+                  className="text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
+                >
+                  Forgot password?
+                </Link>
               </form>
             </CardContent>
           </>
@@ -132,8 +148,8 @@ export default function LoginPage() {
               <CardTitle>{useBackup ? "Backup code" : "Two-factor auth"}</CardTitle>
               <CardDescription>
                 {useBackup
-                  ? "Enter one of your 8-character backup codes."
-                  : "Enter the 6-digit code from your authenticator app."}
+                  ? "Enter one of your 12-character backup codes."
+                  : "Open Google Authenticator and enter the 6-digit code."}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -153,7 +169,7 @@ export default function LoginPage() {
                   />
                 </div>
                 {error && <p className="text-sm text-destructive">{error}</p>}
-                <Button type="submit" disabled={loading}>
+                <Button type="submit" disabled={loading} className="w-full">
                   {loading ? "Verifying…" : "Sign in"}
                 </Button>
                 <button
@@ -167,7 +183,7 @@ export default function LoginPage() {
                 >
                   {useBackup
                     ? "Use authenticator app instead"
-                    : "Use a backup code instead"}
+                    : "Lost access? Use a backup code"}
                 </button>
               </form>
             </CardContent>

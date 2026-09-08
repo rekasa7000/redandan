@@ -20,12 +20,20 @@ func Register(r *gin.Engine, h *handlers.Handler, cfg *config.Config) {
 	{
 		auth.POST("/login", h.Login)
 		auth.POST("/logout", h.Logout)
+		auth.POST("/forgot-password", h.ForgotPassword)
 
 		// Step 2: requires pending token
 		pending := auth.Group("", middleware.RequirePending(cfg.JWTSecret))
 		{
 			pending.POST("/totp/validate", h.TOTPValidate)
 			pending.POST("/backup-code", h.BackupCode)
+		}
+
+		// Auth endpoints that require a full access token
+		authProtected := auth.Group("", middleware.RequireAuth(cfg.JWTSecret))
+		{
+			authProtected.GET("/me", h.Me)
+			authProtected.POST("/change-password", h.ChangePassword)
 		}
 
 		// TOTP management: requires full access token
