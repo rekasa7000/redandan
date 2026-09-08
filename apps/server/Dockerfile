@@ -4,10 +4,12 @@ FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
 COPY go.mod ./
-# go.sum is generated here if it doesn't exist locally (first build without Go installed)
 RUN go mod download
 
 COPY . .
+
+# go mod tidy generates go.sum if it doesn't exist locally (first build without Go installed)
+RUN go mod tidy
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o server ./cmd/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -o seed   ./cmd/seed/main.go
