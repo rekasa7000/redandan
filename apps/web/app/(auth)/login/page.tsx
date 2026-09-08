@@ -2,10 +2,19 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { setToken } from "@/lib/session";
+
+const API = process.env.NEXT_PUBLIC_API_URL;
 
 type Step = "password" | "totp";
 
@@ -17,6 +26,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [useBackup, setUseBackup] = useState(false);
+  const [pendingToken, setPendingToken] = useState("");
 
   async function handlePassword(e: React.FormEvent) {
     e.preventDefault();
@@ -24,7 +34,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(`${API}/api/v1/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
@@ -36,10 +46,15 @@ export default function LoginPage() {
         return;
       }
 
-      if (data.requireTotp) {
+      if (data.require_totp) {
+        // Go server issued a short-lived pending token; hold it in state
+        // so the second step can attach it as a Bearer token.
+        setPendingToken(data.token ?? "");
         setStep("totp");
       } else {
-        router.replace("/");
+        // TOTP not yet set up — server issued full access token
+        setToken(data.token);
+        router.replace("/settings");
       }
     } catch {
       setError("Something went wrong");
@@ -54,13 +69,16 @@ export default function LoginPage() {
     setLoading(true);
 
     const endpoint = useBackup
-      ? "/api/auth/backup-code"
-      : "/api/auth/totp/validate";
+      ? `${API}/api/v1/auth/backup-code`
+      : `${API}/api/v1/auth/totp/validate`;
 
     try {
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${pendingToken}`,
+        },
         body: JSON.stringify({ code }),
       });
       const data = await res.json();
@@ -70,6 +88,7 @@ export default function LoginPage() {
         return;
       }
 
+      setToken(data.token);
       router.replace("/");
     } catch {
       setError("Something went wrong");
@@ -100,9 +119,7 @@ export default function LoginPage() {
                     required
                   />
                 </div>
-                {error && (
-                  <p className="text-sm text-destructive">{error}</p>
-                )}
+                {error && <p className="text-sm text-destructive">{error}</p>}
                 <Button type="submit" disabled={loading}>
                   {loading ? "Checking…" : "Continue"}
                 </Button>
@@ -115,7 +132,7 @@ export default function LoginPage() {
               <CardTitle>{useBackup ? "Backup code" : "Two-factor auth"}</CardTitle>
               <CardDescription>
                 {useBackup
-                  ? "Enter one of your 12-character backup codes."
+                  ? "Enter one of your 8-character backup codes."
                   : "Enter the 6-digit code from your authenticator app."}
               </CardDescription>
             </CardHeader>
@@ -135,9 +152,7 @@ export default function LoginPage() {
                     required
                   />
                 </div>
-                {error && (
-                  <p className="text-sm text-destructive">{error}</p>
-                )}
+                {error && <p className="text-sm text-destructive">{error}</p>}
                 <Button type="submit" disabled={loading}>
                   {loading ? "Verifying…" : "Sign in"}
                 </Button>

@@ -1,85 +1,31 @@
-import { SignJWT, jwtVerify } from "jose";
-import { cookies } from "next/headers";
+// Cookie helpers for the Go server's access JWT.
+// The token is issued by apps/server (Go + Gin) and stored in a browser
+// cookie. The Next.js app never signs or verifies JWTs itself.
 
-export const SESSION_COOKIE = "reliva_session";
-export const PENDING_COOKIE = "reliva_pending";
+export const TOKEN_COOKIE = "reliva_token";
 
-const secret = () => new TextEncoder().encode(process.env.AUTH_SECRET!);
-
-export interface SessionPayload {
-  userId: string;
+/** Read the Go server token from a cookie string (edge-compatible). */
+export function getTokenFromCookieHeader(cookieHeader: string): string | null {
+  const match = cookieHeader.match(
+    new RegExp(`(?:^|;\\s*)${TOKEN_COOKIE}=([^;]+)`),
+  );
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
-// ── Sign / verify ────────────────────────────────────────────
-
-export async function signToken(
-  payload: SessionPayload,
-  ttl: string,
-): Promise<string> {
-  return new SignJWT({ ...payload })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(ttl)
-    .sign(secret());
+/** Set the reliva_token cookie (call from client-side code after login). */
+export function setToken(token: string, maxAgeDays = 30): void {
+  const maxAge = maxAgeDays * 24 * 60 * 60;
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${TOKEN_COOKIE}=${encodeURIComponent(token)}; Max-Age=${maxAge}; Path=/${secure}; SameSite=Lax`;
 }
 
-export async function verifyToken(
-  token: string,
-): Promise<SessionPayload | null> {
-  try {
-    const { payload } = await jwtVerify(token, secret());
-    return { userId: payload.userId as string };
-  } catch {
-    return null;
-  }
+/** Clear the reliva_token cookie (call from client-side code on logout). */
+export function clearToken(): void {
+  document.cookie = `${TOKEN_COOKIE}=; Max-Age=0; Path=/`;
 }
 
-// ── Cookie helpers (server components / route handlers only) ─
-
-export async function getSession(): Promise<SessionPayload | null> {
-  const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
-  return verifyToken(token);
-}
-
-export async function setSession(userId: string): Promise<void> {
-  const token = await signToken({ userId }, "30d");
-  const store = await cookies();
-  store.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: 60 * 60 * 24 * 30,
-    path: "/",
-  });
-}
-
-export async function clearSession(): Promise<void> {
-  const store = await cookies();
-  store.delete(SESSION_COOKIE);
-}
-
-export async function setPending(userId: string): Promise<void> {
-  const token = await signToken({ userId }, "5m");
-  const store = await cookies();
-  store.set(PENDING_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: 60 * 5,
-    path: "/",
-  });
-}
-
-export async function getPending(): Promise<SessionPayload | null> {
-  const store = await cookies();
-  const token = store.get(PENDING_COOKIE)?.value;
-  if (!token) return null;
-  return verifyToken(token);
-}
-
-export async function clearPending(): Promise<void> {
-  const store = await cookies();
-  store.delete(PENDING_COOKIE);
+/** Read the token from document.cookie (client-side only). */
+export function getToken(): string | null {
+  if (typeof document === "undefined") return null;
+  return getTokenFromCookieHeader(document.cookie);
 }

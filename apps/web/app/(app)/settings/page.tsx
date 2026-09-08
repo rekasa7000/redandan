@@ -2,10 +2,26 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { getToken } from "@/lib/session";
+
+const API = process.env.NEXT_PUBLIC_API_URL;
+
+function authHeaders() {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${getToken() ?? ""}`,
+  };
+}
 
 type SetupStep = "idle" | "scan" | "done";
 
@@ -23,9 +39,14 @@ export default function SettingsPage() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/totp/setup");
+      const res = await fetch(`${API}/api/v1/auth/totp/setup`, {
+        headers: authHeaders(),
+      });
       const data = await res.json();
-      if (!res.ok) { setError(data.error ?? "Setup failed"); return; }
+      if (!res.ok) {
+        setError(data.error ?? "Setup failed");
+        return;
+      }
       setQr(data.qr);
       setSecret(data.secret);
       setStep("scan");
@@ -41,13 +62,16 @@ export default function SettingsPage() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/totp/confirm", {
+      const res = await fetch(`${API}/api/v1/auth/totp/confirm`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({ code }),
       });
       const data = await res.json();
-      if (!res.ok) { setError(data.error ?? "Invalid code"); return; }
+      if (!res.ok) {
+        setError(data.error ?? "Invalid code");
+        return;
+      }
       setBackupCodes(data.backup_codes);
       setStep("done");
     } catch {
