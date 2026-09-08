@@ -1,9 +1,10 @@
 # Stage 1: build both server and seed binaries
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
-COPY go.mod go.sum ./
+COPY go.mod ./
+# go.sum is generated here if it doesn't exist locally (first build without Go installed)
 RUN go mod download
 
 COPY . .
