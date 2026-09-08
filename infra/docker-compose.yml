@@ -21,6 +21,7 @@ services:
     build:
       context: ../apps/server
       dockerfile: Dockerfile
+      target: server
     restart: unless-stopped
     environment:
       MONGO_URI: mongodb://${MONGO_ROOT_USER:-reliva}:${MONGO_ROOT_PASSWORD}@mongo:27017/${DB_NAME:-reliva}?authSource=admin
@@ -35,6 +36,21 @@ services:
       GIN_MODE: ${GIN_MODE:-release}
     ports:
       - "${SERVER_PORT:-8080}:${SERVER_PORT:-8080}"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  seed:
+    build:
+      context: ../apps/server
+      dockerfile: Dockerfile
+      target: seed
+    restart: "no"
+    environment:
+      MONGO_URI: mongodb://${MONGO_ROOT_USER:-reliva}:${MONGO_ROOT_PASSWORD}@mongo:27017/${DB_NAME:-reliva}?authSource=admin
+      DB_NAME: ${DB_NAME:-reliva}
+      SEED_EMAIL: ${SEED_EMAIL}
+      SEED_PASSWORD: ${SEED_PASSWORD}
     depends_on:
       mongo:
         condition: service_healthy
