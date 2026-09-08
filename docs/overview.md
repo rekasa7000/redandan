@@ -1,4 +1,4 @@
-# Overview — What is Redandan?
+# Overview — What is Reliva?
 
 ## The Problem
 
@@ -12,7 +12,7 @@ The friction is real:
 
 ## The Solution
 
-Redandan is a **personal operating system** — a single, private system that holds everything that matters to you, surfaces what's relevant right now, and gets out of the way.
+Reliva is a **personal operating system** — a single, private system that holds everything that matters to you, surfaces what's relevant right now, and gets out of the way.
 
 It is not a product for everyone. It is engineered for one person (you) and optimized for your specific friction points.
 
@@ -26,7 +26,7 @@ This means:
 - One place to retrieve any password — without browser-vendor lock-in
 - Notifications that come to you, not the other way around
 
-## What Redandan Is Not
+## What Reliva Is Not
 
 - It is not a project management tool for teams
 - It is not a public product (yet)
@@ -35,9 +35,9 @@ This means:
 
 ## The Integration Mindset
 
-Work and personal life are not opposites to be "balanced." They are both part of your one life. Redandan treats them that way — tasks from Job 1 and a vacation trip live in the same system, displayed in the same timeline, notified through the same channel.
+Work and personal life are not opposites to be "balanced." They are both part of your one life. Reliva treats them that way — tasks from Job 1 and a vacation trip live in the same system, displayed in the same timeline, notified through the same channel.
 
-You don't need to context-switch between apps. You check Redandan.
+You don't need to context-switch between apps. You check Reliva.
 
 ## The Long-Term Potential
 

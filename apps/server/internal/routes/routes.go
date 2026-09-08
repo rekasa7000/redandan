@@ -3,9 +3,9 @@ package routes
 import (
 	"github.com/gin-gonic/gin"
 
-	"redandan/server/internal/config"
-	"redandan/server/internal/handlers"
-	"redandan/server/internal/middleware"
+	"reliva/server/internal/config"
+	"reliva/server/internal/handlers"
+	"reliva/server/internal/middleware"
 )
 
 // Register mounts all API routes onto the given engine.

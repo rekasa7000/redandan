@@ -1,4 +1,4 @@
-# Redandan — Project Planning Document
+# Reliva — Project Planning Document
 
 > Personal Centralized Life & Tech Hub
 > Single-user. Personal. Full-fledged.
@@ -7,7 +7,7 @@
 
 ## 1. Vision Summary
 
-Redandan is a personal operating system for your life. It is not a generic SaaS product — it is built specifically for one user (you), solving real friction points:
+Reliva is a personal operating system for your life. It is not a generic SaaS product — it is built specifically for one user (you), solving real friction points:
 
 - You have multiple jobs and lose track of tasks and deadlines
 - You want your work life and personal life integrated, not separated
@@ -74,7 +74,7 @@ The same Next.js codebase serves all platforms:
 - No registration flow needed — seeded on deploy
 
 ### 4.2 Task Tracker
-The core feature. Tasks are the atomic unit of Redandan.
+The core feature. Tasks are the atomic unit of Reliva.
 
 **Fields per task:**
 - Title, description
@@ -410,7 +410,7 @@ MONGODB_URI=mongodb+srv://...
 
 # Auth
 AUTH_SECRET=...
-AUTH_URL=https://redandan.vercel.app
+AUTH_URL=https://reliva.vercel.app
 
 # Push Notifications (VAPID)
 VAPID_PUBLIC_KEY=...
@@ -426,7 +426,7 @@ CRON_SECRET=...  # Vercel cron auth header
 ## 13. Folder Structure (Target)
 
 ```
-redandan/
+reliva/
   app/
     api/                    — API route handlers
     (auth)/                 — Auth pages (not in nav)
@@ -454,4 +454,4 @@ redandan/
 
 ---
 
-*This document is the single source of truth for Redandan's architecture and roadmap. Update it as the project evolves.*
+*This document is the single source of truth for Reliva's architecture and roadmap. Update it as the project evolves.*

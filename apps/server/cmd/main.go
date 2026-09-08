@@ -12,10 +12,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
-	"redandan/server/internal/config"
-	"redandan/server/internal/db"
-	"redandan/server/internal/handlers"
-	"redandan/server/internal/routes"
+	"reliva/server/internal/config"
+	"reliva/server/internal/db"
+	"reliva/server/internal/handlers"
+	"reliva/server/internal/routes"
 )
 
 func main() {

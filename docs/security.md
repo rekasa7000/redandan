@@ -1,13 +1,13 @@
 # Security
 
-Security is a first-class concern in Redandan — especially for the password vault and authentication.
+Security is a first-class concern in Reliva — especially for the password vault and authentication.
 This document covers the threat model, the mitigations, and the rules that must not be broken.
 
 ---
 
 ## Threat Model
 
-Redandan is a personal app with one user. The relevant threats are:
+Reliva is a personal app with one user. The relevant threats are:
 
 | Threat | Likelihood | Impact |
 |---|---|---|

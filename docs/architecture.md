@@ -25,7 +25,7 @@ This means:
                                    │ native mongodb driver
                     ┌──────────────▼───────────────┐
                     │                              │
-                    │     Redandan API (Vercel)    │
+                    │     Reliva API (Vercel)    │
                     │       /app/api/**            │
                     │                              │
                     │  Auth: Session cookie (web)  │

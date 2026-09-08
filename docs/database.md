@@ -34,7 +34,7 @@ if (process.env.NODE_ENV === 'development') {
 export async function getDb(): Promise<Db> {
   if (!db) {
     await client.connect()
-    db = client.db('redandan')
+    db = client.db('reliva')
   }
   return db
 }

@@ -20,7 +20,7 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		MongoURI:        mustGetEnv("MONGODB_URI"),
-		DBName:          getEnv("DB_NAME", "redandan"),
+		DBName:          getEnv("DB_NAME", "reliva"),
 		JWTSecret:       mustGetEnv("JWT_SECRET"),
 		ServerPort:      getEnv("PORT", "8080"),
 		AllowedOrigins:  strings.Split(getEnv("ALLOWED_ORIGINS", "http://localhost:3000"), ","),

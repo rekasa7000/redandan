@@ -126,13 +126,13 @@ The extension can obtain a bearer token by posting credentials + TOTP to the API
 - [ ] Quick task-add form in popup
 - [ ] Build script (`esbuild`) in `package.json`
 
-**Done when:** You visit GitHub's login page, click the Redandan extension icon, see your GitHub credentials, click to autofill, and the form is filled.
+**Done when:** You visit GitHub's login page, click the Reliva extension icon, see your GitHub credentials, click to autofill, and the form is filled.
 
 ---
 
 ## Phase 7 — Mobile (Android)
 
-**Goal:** Install Redandan on your Android phone as a native app with push notifications.
+**Goal:** Install Reliva on your Android phone as a native app with push notifications.
 
 **Deliverables:**
 - [ ] `next.config.ts` updated with `output: 'export'`
@@ -145,7 +145,7 @@ The extension can obtain a bearer token by posting credentials + TOTP to the API
 - [ ] APK built and sideloaded on personal Android device
 - [ ] Mobile-specific UI tweaks (bottom nav, larger tap targets)
 
-**Done when:** Redandan is installed on your phone. You get a native push at 8am. You can create tasks and check the calendar from the app.
+**Done when:** Reliva is installed on your phone. You get a native push at 8am. You can create tasks and check the calendar from the app.
 
 ---
 
@@ -159,7 +159,7 @@ The extension can obtain a bearer token by posting credentials + TOTP to the API
 - **Export / backup** — JSON export of all data for personal archive
 - **iOS build** — Requires macOS + Xcode
 - **WebAuthn / Passkeys** — Hardware key as a TOTP replacement (higher security ceiling)
-- **Multi-user** — If Redandan ever becomes a product for others
+- **Multi-user** — If Reliva ever becomes a product for others
 
 ---
 

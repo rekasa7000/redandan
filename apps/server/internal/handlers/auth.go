@@ -13,8 +13,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"golang.org/x/crypto/bcrypt"
 
-	"redandan/server/internal/middleware"
-	"redandan/server/internal/models"
+	"reliva/server/internal/middleware"
+	"reliva/server/internal/models"
 )
 
 // POST /api/v1/auth/login
@@ -123,7 +123,7 @@ func (h *Handler) TOTPSetup(c *gin.Context) {
 	}
 
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "Redandan",
+		Issuer:      "Reliva",
 		AccountName: user.Email,
 	})
 	if err != nil {

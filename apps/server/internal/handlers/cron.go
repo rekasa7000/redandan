@@ -9,7 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"redandan/server/internal/models"
+	"reliva/server/internal/models"
 )
 
 // POST /api/v1/cron/notify

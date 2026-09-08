@@ -17,7 +17,7 @@ Use `.env.example` as the committed reference with empty values.
 
 **Format:**
 ```
-MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/redandan?retryWrites=true&w=majority
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/reliva?retryWrites=true&w=majority
 ```
 
 Get this from MongoDB Atlas → your cluster → Connect → Drivers → Node.js.
@@ -39,7 +39,7 @@ openssl rand -base64 32
 **Values:**
 ```
 AUTH_SECRET=<32+ character random string>
-AUTH_URL=https://redandan.vercel.app
+AUTH_URL=https://reliva.vercel.app
 ```
 
 In development:
@@ -61,7 +61,7 @@ and the stored TOTP secret will no longer be decryptable — you will need to re
 
 **Value:**
 ```
-ALLOWED_ORIGINS=https://redandan.vercel.app,chrome-extension://<extension-id>
+ALLOWED_ORIGINS=https://reliva.vercel.app,chrome-extension://<extension-id>
 ```
 
 In development:

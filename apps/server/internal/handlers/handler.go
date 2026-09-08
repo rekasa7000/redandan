@@ -3,7 +3,7 @@ package handlers
 import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 
-	"redandan/server/internal/config"
+	"reliva/server/internal/config"
 )
 
 // Handler holds shared dependencies injected into every route handler.

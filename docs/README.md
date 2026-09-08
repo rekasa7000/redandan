@@ -1,8 +1,8 @@
-# Redandan — Documentation
+# Reliva — Documentation
 
 > Personal Centralized Life & Tech Hub
 
-This folder contains all technical documentation for the Redandan project.
+This folder contains all technical documentation for the Reliva project.
 Read this index first, then navigate to the relevant document.
 
 ---
@@ -11,7 +11,7 @@ Read this index first, then navigate to the relevant document.
 
 | File | Description |
 |---|---|
-| [overview.md](overview.md) | Vision, philosophy, and what Redandan is |
+| [overview.md](overview.md) | Vision, philosophy, and what Reliva is |
 | [architecture.md](architecture.md) | System architecture, platform diagram, data flow |
 | [tech-stack.md](tech-stack.md) | Full technology stack with versions and rationale |
 | [technical-decisions.md](technical-decisions.md) | Architecture Decision Records (ADRs) |

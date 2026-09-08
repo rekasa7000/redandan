@@ -8,8 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"redandan/server/internal/middleware"
-	"redandan/server/internal/models"
+	"reliva/server/internal/middleware"
+	"reliva/server/internal/models"
 )
 
 // GET /api/v1/credentials

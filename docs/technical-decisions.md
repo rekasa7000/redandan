@@ -1,6 +1,6 @@
 # Technical Decisions
 
-Architecture Decision Records (ADRs) for Redandan.
+Architecture Decision Records (ADRs) for Reliva.
 Each decision documents the context, the choice made, and why.
 
 ---

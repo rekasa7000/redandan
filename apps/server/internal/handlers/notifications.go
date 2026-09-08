@@ -9,8 +9,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"redandan/server/internal/middleware"
-	"redandan/server/internal/models"
+	"reliva/server/internal/middleware"
+	"reliva/server/internal/models"
 )
 
 // POST /api/v1/push/subscribe

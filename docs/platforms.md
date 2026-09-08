@@ -1,6 +1,6 @@
 # Platforms
 
-Redandan runs on three platforms from a single codebase.
+Reliva runs on three platforms from a single codebase.
 Each platform consumes the same Vercel-hosted API.
 
 ---
@@ -8,7 +8,7 @@ Each platform consumes the same Vercel-hosted API.
 ## Platform 1 — Web (Primary)
 
 **Stack:** Next.js 16 on Vercel
-**URL:** `https://redandan.vercel.app` (or custom domain)
+**URL:** `https://reliva.vercel.app` (or custom domain)
 **Status:** Phase 1–5
 
 The web app is the primary development target and the source of truth for UI and features.
@@ -81,8 +81,8 @@ extension/
 
 ### Auth Flow in Extension
 
-1. First use: popup shows "Connect to Redandan" button
-2. User clicks → opens `https://redandan.vercel.app/api/auth/extension-token` in a tab
+1. First use: popup shows "Connect to Reliva" button
+2. User clicks → opens `https://reliva.vercel.app/api/auth/extension-token` in a tab
 3. App returns a long-lived token (stored in `chrome.storage.local`)
 4. Extension uses this token as a `Bearer` header on all API calls
 5. Token is refreshed by the background service worker before expiry
@@ -92,7 +92,7 @@ extension/
 1. Content script runs on every page load
 2. Detects `<input type="password">` — signals a login form
 3. Fetches `GET /api/credentials?site=<current-domain>` with the stored token
-4. If matches found, shows a small Redandan icon inside the input field
+4. If matches found, shows a small Reliva icon inside the input field
 5. User clicks icon → popup shows matched credentials → user clicks to fill
 
 ### Cross-Browser Notes
@@ -128,7 +128,7 @@ Next.js build (static export)
 1. Set `output: 'export'` in `next.config.ts` (static HTML/CSS/JS output)
 2. Run `next build` → generates `out/` folder
 3. Install Capacitor: `bun add @capacitor/core @capacitor/cli`
-4. Initialize: `bun cap init redandan com.personal.redandan`
+4. Initialize: `bun cap init reliva com.personal.reliva`
 5. Set `webDir: 'out'` in `capacitor.config.ts`
 6. Add Android: `bun cap add android`
 7. Sync: `bun cap sync`
@@ -151,11 +151,11 @@ The mobile app calls the same Vercel API as the web app.
 The `capacitor.config.ts` sets the server URL:
 ```ts
 const config: CapacitorConfig = {
-  appId: 'com.personal.redandan',
-  appName: 'Redandan',
+  appId: 'com.personal.reliva',
+  appName: 'Reliva',
   webDir: 'out',
   server: {
-    url: 'https://redandan.vercel.app',
+    url: 'https://reliva.vercel.app',
     cleartext: false
   }
 }

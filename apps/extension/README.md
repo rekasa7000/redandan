@@ -1,4 +1,4 @@
-# @redandan/extension
+# @reliva/extension
 
 Browser extension for Chrome and Firefox. Manifest V3.
 
@@ -8,7 +8,7 @@ See `docs/platforms.md` for the full extension architecture and plan.
 
 ## What it will do
 
-- Password autofill on login forms (fetches from the Redandan API)
+- Password autofill on login forms (fetches from the Reliva API)
 - Quick task creation from any tab
 - Notification badge showing overdue task count
 

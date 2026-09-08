@@ -6,7 +6,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ---
 
-# Redandan — Agent Rules
+# Reliva — Agent Rules
 
 Full agent documentation is in `docs/agents.md`. The rules below are mandatory and apply to every session.
 

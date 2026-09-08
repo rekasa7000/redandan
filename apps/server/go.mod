@@ -1,4 +1,4 @@
-module redandan/server
+module reliva/server
 
 go 1.23
 
