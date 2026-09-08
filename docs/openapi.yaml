@@ -1,0 +1,1030 @@
+openapi: 3.1.0
+
+info:
+  title: Reliva API
+  version: 1.0.0
+  description: |
+    Standalone REST API for the Reliva personal hub.
+    All clients (web, extension, mobile) authenticate with bearer tokens.
+
+    ## Auth flow
+    1. `POST /api/v1/auth/login` — password → **pending token** (5 min)
+    2. `POST /api/v1/auth/totp/validate` — TOTP code + pending token → **access token** (30 days)
+    3. Use the access token as `Authorization: Bearer <token>` on all protected routes.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://your-server.railway.app
+    description: Production
+
+# Default security for all endpoints (overridden per-operation where needed)
+security:
+  - BearerAuth: []
+
+# ─────────────────────────────────────────────────────────────
+# COMPONENTS
+# ─────────────────────────────────────────────────────────────
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Full access token (`type="access"`). Issued after password + TOTP verification.
+    PendingAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Pending token (`type="pending"`). Valid only for TOTP / backup-code endpoints.
+    CronAuth:
+      type: http
+      scheme: bearer
+      description: Static CRON_SECRET. Used only on the cron endpoint.
+
+  schemas:
+
+    # ── Error ─────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: unauthorized
+
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+
+    # ── Auth ──────────────────────────────────────────────────
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+
+    PendingTokenResponse:
+      type: object
+      properties:
+        pending_token:
+          type: string
+          description: Short-lived JWT (5 min). Use on TOTP / backup-code endpoints.
+
+    AccessTokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: Long-lived JWT (30 days). Use as Bearer token on all protected routes.
+
+    TOTPCodeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          minLength: 6
+          maxLength: 6
+          example: "123456"
+
+    TOTPSetupResponse:
+      type: object
+      properties:
+        uri:
+          type: string
+          description: otpauth:// URI — encode this into a QR code for the authenticator app.
+          example: "otpauth://totp/Reliva:user@example.com?secret=BASE32SECRET&issuer=Reliva"
+        secret:
+          type: string
+          description: Base32 TOTP secret for manual entry if QR scanning is not possible.
+
+    TOTPConfirmResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: TOTP enabled
+        backup_codes:
+          type: array
+          items:
+            type: string
+          description: |
+            8 one-time backup codes displayed once. Store them securely.
+            Each code is a 12-character hex string.
+
+    BackupCodeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: One of the 12-character hex backup codes.
+
+    # ── Context ───────────────────────────────────────────────
+    Context:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: MongoDB ObjectID hex string
+          example: "64a1f2e3b4c5d6e7f8a9b0c1"
+        name:
+          type: string
+          example: "Job 1 — Company Name"
+        slug:
+          type: string
+          example: job-1
+        color:
+          type: string
+          example: "#6366f1"
+        icon:
+          type: string
+          example: briefcase
+        type:
+          type: string
+          enum: [work, personal, health, finance, travel, custom]
+        order:
+          type: integer
+          example: 0
+
+    CreateContextRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        color:
+          type: string
+        icon:
+          type: string
+
+    UpdateContextRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        color:
+          type: string
+        icon:
+          type: string
+
+    # ── Task ──────────────────────────────────────────────────
+    Task:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "64a1f2e3b4c5d6e7f8a9b0c2"
+        title:
+          type: string
+          example: Submit quarterly report
+        description:
+          type: string
+        contextId:
+          type: string
+          example: "64a1f2e3b4c5d6e7f8a9b0c1"
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+        status:
+          type: string
+          enum: [todo, in_progress, done, archived]
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+        reminderAt:
+          type: string
+          format: date-time
+          nullable: true
+        recurrence:
+          type: string
+          enum: [none, daily, weekly, monthly]
+        tags:
+          type: array
+          items:
+            type: string
+        notes:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateTaskRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        context_id:
+          type: string
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+        due_date:
+          type: string
+          format: date-time
+        tags:
+          type: array
+          items:
+            type: string
+
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [todo, in_progress, done, archived]
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+        due_date:
+          type: string
+          format: date-time
+        tags:
+          type: array
+          items:
+            type: string
+        context_id:
+          type: string
+
+    # ── Event ─────────────────────────────────────────────────
+    Event:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "64a1f2e3b4c5d6e7f8a9b0c3"
+        title:
+          type: string
+          example: Payroll — Job 1
+        type:
+          type: string
+          enum: [payroll, vacation, deadline, appointment, custom]
+        contextId:
+          type: string
+          nullable: true
+        date:
+          type: string
+          format: date-time
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+        allDay:
+          type: boolean
+        recurrence:
+          type: string
+          enum: [none, monthly, annually]
+        notes:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateEventRequest:
+      type: object
+      required: [title, start_time]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        all_day:
+          type: boolean
+        context_id:
+          type: string
+
+    UpdateEventRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        all_day:
+          type: boolean
+        context_id:
+          type: string
+
+    # ── Credential ────────────────────────────────────────────
+    # The server never decrypts. All sensitive fields are AES-GCM ciphertext.
+    Credential:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "64a1f2e3b4c5d6e7f8a9b0c4"
+        site:
+          type: string
+          example: GitHub
+        siteUrl:
+          type: string
+          example: "https://github.com"
+        username:
+          type: string
+          example: yourhandle
+        encryptedPassword:
+          type: string
+          description: AES-GCM ciphertext, base64url encoded
+        iv:
+          type: string
+          description: AES-GCM IV, base64url encoded
+        salt:
+          type: string
+          description: PBKDF2 salt, base64url encoded
+        encryptedNotes:
+          type: string
+          nullable: true
+          description: Encrypted notes ciphertext, base64url encoded
+        notesIv:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        lastModified:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateCredentialRequest:
+      type: object
+      required: [site, encrypted_data, iv, salt]
+      properties:
+        site:
+          type: string
+        username:
+          type: string
+        encrypted_data:
+          type: string
+          description: AES-GCM ciphertext from client-side encryption
+        iv:
+          type: string
+        salt:
+          type: string
+        notes:
+          type: string
+
+    UpdateCredentialRequest:
+      type: object
+      properties:
+        site:
+          type: string
+        username:
+          type: string
+        encrypted_data:
+          type: string
+        iv:
+          type: string
+        salt:
+          type: string
+        notes:
+          type: string
+
+    # ── Notification ──────────────────────────────────────────
+    Notification:
+      type: object
+      properties:
+        _id:
+          type: string
+        type:
+          type: string
+          enum: [task_due, task_overdue, event_reminder, overdue_digest]
+        refId:
+          type: string
+          nullable: true
+          description: ObjectID of the related task or event
+        refType:
+          type: string
+          enum: [task, event]
+          nullable: true
+        message:
+          type: string
+        sentAt:
+          type: string
+          format: date-time
+        read:
+          type: boolean
+
+    # ── Push ──────────────────────────────────────────────────
+    PushSubscribeRequest:
+      type: object
+      required: [endpoint, keys]
+      properties:
+        endpoint:
+          type: string
+          description: Browser-provided push endpoint URL
+        keys:
+          type: object
+          required: [p256dh, auth]
+          properties:
+            p256dh:
+              type: string
+            auth:
+              type: string
+
+# ─────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────
+paths:
+
+  # ── Auth ────────────────────────────────────────────────────
+
+  /api/v1/auth/login:
+    post:
+      summary: Step 1 — verify password, receive pending token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Password accepted. Use pending_token on the TOTP endpoint.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingTokenResponse"
+        "400":
+          description: Missing password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Invalid password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/auth/logout:
+    post:
+      summary: Logout (stateless — client discards token)
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/auth/totp/validate:
+    post:
+      summary: Step 2 — verify TOTP code, receive access token
+      tags: [Auth]
+      security:
+        - PendingAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TOTPCodeRequest"
+      responses:
+        "200":
+          description: TOTP valid. Use access_token on all protected routes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessTokenResponse"
+        "401":
+          description: Invalid TOTP code or token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/auth/backup-code:
+    post:
+      summary: Step 2 (alt) — use a backup code instead of TOTP
+      tags: [Auth]
+      security:
+        - PendingAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupCodeRequest"
+      responses:
+        "200":
+          description: Backup code accepted and burned. Returns access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessTokenResponse"
+        "401":
+          description: Invalid backup code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/auth/totp/setup:
+    get:
+      summary: Generate a new TOTP secret (stored as pending until confirmed)
+      tags: [Auth]
+      responses:
+        "200":
+          description: TOTP secret and QR URI
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPSetupResponse"
+
+  /api/v1/auth/totp/confirm:
+    post:
+      summary: Confirm TOTP setup with first valid code — activates TOTP and returns backup codes
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TOTPCodeRequest"
+      responses:
+        "200":
+          description: TOTP activated. Backup codes shown once — save them now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPConfirmResponse"
+        "400":
+          description: No pending TOTP setup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Invalid TOTP code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Contexts ────────────────────────────────────────────────
+
+  /api/v1/contexts:
+    get:
+      summary: List all contexts
+      tags: [Contexts]
+      responses:
+        "200":
+          description: Array of contexts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Context"
+    post:
+      summary: Create a context
+      tags: [Contexts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContextRequest"
+      responses:
+        "201":
+          description: Created context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Context"
+
+  /api/v1/contexts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get a context by ID
+      tags: [Contexts]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Context"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      summary: Update a context
+      tags: [Contexts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateContextRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Context"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Delete a context
+      tags: [Contexts]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Tasks ───────────────────────────────────────────────────
+
+  /api/v1/tasks:
+    get:
+      summary: List tasks (filterable)
+      tags: [Tasks]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [todo, in_progress, done, archived]
+        - name: context_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of tasks sorted by due date ascending
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Task"
+    post:
+      summary: Create a task
+      tags: [Tasks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+
+  /api/v1/tasks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get a task by ID
+      tags: [Tasks]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      summary: Update a task
+      tags: [Tasks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTaskRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Delete a task
+      tags: [Tasks]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Events ──────────────────────────────────────────────────
+
+  /api/v1/events:
+    get:
+      summary: List events sorted by start time ascending
+      tags: [Events]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+    post:
+      summary: Create an event
+      tags: [Events]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEventRequest"
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+
+  /api/v1/events/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get an event by ID
+      tags: [Events]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      summary: Update an event
+      tags: [Events]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateEventRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Delete an event
+      tags: [Events]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Credentials ─────────────────────────────────────────────
+
+  /api/v1/credentials:
+    get:
+      summary: List credentials (ciphertext only — no server-side decryption)
+      tags: [Credentials]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Credential"
+    post:
+      summary: Store an encrypted credential
+      tags: [Credentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCredentialRequest"
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+
+  /api/v1/credentials/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get a credential by ID
+      tags: [Credentials]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      summary: Update a credential
+      tags: [Credentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCredentialRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Delete a credential
+      tags: [Credentials]
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Notifications ────────────────────────────────────────────
+
+  /api/v1/notifications:
+    get:
+      summary: List the 50 most recent notifications
+      tags: [Notifications]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Notification"
+
+  /api/v1/notifications/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      summary: Mark a notification as read
+      tags: [Notifications]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Push ────────────────────────────────────────────────────
+
+  /api/v1/push/subscribe:
+    post:
+      summary: Register a Web Push subscription (upserts by endpoint)
+      tags: [Push]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushSubscribeRequest"
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # ── Cron ────────────────────────────────────────────────────
+
+  /api/v1/cron/notify:
+    post:
+      summary: Daily cron — create notifications for tasks due today
+      tags: [Cron]
+      security:
+        - CronAuth: []
+      responses:
+        "200":
+          description: Notifications created (or none needed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  created:
+                    type: integer
+        "403":
+          description: Invalid cron secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
