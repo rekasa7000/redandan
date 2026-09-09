@@ -29,9 +29,11 @@ This means:
 ## What Reliva Is Not
 
 - It is not a project management tool for teams
-- It is not a public product (yet)
+- It is not a public product (yet) — there's no self-serve signup; every account is provisioned
+  directly by whoever controls the deployment
 - It is not trying to replace your calendar app or notes app entirely
-- It does not need to scale to thousands of users — it scales to one
+- It does not need to scale to thousands of users — the data model supports more than one account
+  (see ADR-012 in `docs/technical-decisions.md`), but in practice it's built around one operator
 
 ## The Integration Mindset
 
@@ -41,12 +43,15 @@ You don't need to context-switch between apps. You check Reliva.
 
 ## The Long-Term Potential
 
-While this is built as a personal tool, the architecture is clean enough to evolve. If it reaches a point where it could benefit others, the foundation is already there:
+While this is built as a personal tool, the architecture is clean enough to evolve. If it reaches a point where it could benefit others, much of the foundation is already there:
 
 - Proper auth system (not hardcoded credentials)
-- API-first design
+- A data model that already isolates every record per account (ADR-012) — no per-user special-casing to unwind
+- API-first design, standalone from any one client (ADR-011)
 - Multi-platform from day one
 - Clear separation of concerns
+
+What's still missing for that: self-serve signup, per-account roles/permissions, and rate limiting.
 
 But that's not the current objective. The current objective is: **make your daily life smoother, starting with tasks and passwords.**
 

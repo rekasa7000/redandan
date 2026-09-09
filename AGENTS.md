@@ -53,21 +53,30 @@ before inserting into MongoDB. Returns the created task document as JSON.
 
 ## Code
 
-- **No ORM.** Use only the native `mongodb` driver. No Mongoose, Prisma, or Drizzle. Ever.
-- **No `any`.** All code must be properly typed. If `any` is unavoidable, comment the reason.
-- **`validateCaller()` first.** Every API route handler must call `validateCaller(request)` from `lib/auth.ts` as the very first step. It accepts both session cookies (web) and bearer tokens (extension/mobile).
-- **Validate with Zod** immediately after auth, before any DB access.
+`apps/server` (Go) owns all business logic and database access. `apps/web` (Next.js) is a pure
+frontend — it has **no** API routes and **no** MongoDB access. There is no `app/api/**` in
+`apps/web`; don't recreate one. See `docs/architecture.md` and ADR-011 in `docs/technical-decisions.md`.
+
+- **No ORM.** `apps/server` uses only the native `mongo-driver/v2` Go driver. No ODM. Ever.
+- **No `any`** in TypeScript. All code must be properly typed. If `any` is unavoidable, comment the reason.
+- **Auth lives in `apps/server` only.** Every protected Go route is registered under
+  `middleware.RequireAuth`/`RequirePending`/`RequireCron` in `internal/routes/routes.go`. Every
+  client — web, extension, mobile — authenticates with the same bearer JWT; there is no
+  cookie-session code path to keep in sync.
+- **Every query is scoped by `user_id`** (from the JWT). The data model is multi-user by design —
+  see ADR-012 — even though only one operator uses it today. Don't special-case "the one user."
 - **TOTP is mandatory.** Never add a bypass, skip, or mock path for the two-factor auth flow. Both factors — password and TOTP — are always required.
-- **Standalone API.** The API must work identically for all clients. Do not add logic that only works for the web client and not for bearer token callers.
-- **Password vault is client-side only.** No server function may decrypt credentials. Master password never leaves the browser. See `docs/security.md`.
-- **Use `getDb()` from `lib/db.ts`** — never instantiate `MongoClient` directly in a route.
+- **Standalone API.** The Go API must work identically for all clients. Do not add logic that only works for the web client and not for bearer token callers.
+- **Password vault is client-side only.** No Go handler may decrypt credentials. Master password never leaves the browser. See `docs/security.md`.
+- **Use `Handler.col()`** (`apps/server/internal/handlers/handler.go`) to get a Mongo collection — never instantiate a new client in a handler.
 - **No unnecessary abstractions.** Do not create helpers for one-time use.
 
 ---
 
 ## Package Manager
 
-Use **bun** exclusively. Never use npm, yarn, or pnpm.
+`apps/server` is a Go module — use `go mod tidy` / `go build` / `go run`, not bun.
+Everywhere else (workspace root, `apps/web`), use **bun** exclusively. Never use npm, yarn, or pnpm.
 
 ```bash
 bun install / bun add / bun dev / bun build

@@ -4,151 +4,138 @@
 
 | Layer | Technology | Version | Role |
 |---|---|---|---|
-| Framework | Next.js | 16.x | Full-stack: UI + API |
-| Language | TypeScript | 5.x | Type safety across the whole codebase |
-| Runtime | Node.js | 20.x | Server-side execution (Vercel) |
-| Database | MongoDB | 7.x (Atlas) | Primary data store |
-| DB Driver | mongodb (native) | 6.x | Direct queries, no ORM |
+| **Backend** ||||
+| Language | Go | 1.25 | API server — all business logic, all DB access |
+| Framework | Gin | v1.12 | HTTP routing and middleware |
+| Database | MongoDB | 8.x | Primary data store |
+| DB Driver | `go.mongodb.org/mongo-driver/v2` | v2.5 | Direct queries, no ORM |
+| Auth tokens | `golang-jwt/jwt/v5` | v5.2 | Signs pending/access bearer JWTs |
+| 2FA | `pquerna/otp` | v1.4 | TOTP generation and validation (RFC 6238) |
+| QR Code | `skip2/go-qrcode` | — | QR code PNG generation for TOTP setup |
+| Password hashing | `golang.org/x/crypto/bcrypt` | v0.35 | Password + backup code hashing |
+| Env loading | `joho/godotenv` | v1.5 | Loads `.env` in local dev only |
+| Deployment | Docker → Railway or Fly.io | — | Persistent process (Vercel doesn't run Go) |
+| **Frontend** ||||
+| Framework | Next.js | 16.x | Pure frontend — no API routes, no DB access |
+| Language | TypeScript | 5.x | Type safety |
+| Runtime | React | 19.x | UI |
 | UI Library | shadcn/ui | latest | Component library on top of Radix |
 | Styling | Tailwind CSS | 4.x | Utility-first CSS |
-| Auth | Auth.js (NextAuth) | v5 | Session management, credential provider |
-| 2FA | otplib | latest | TOTP generation and validation (RFC 6238) |
-| QR Code | qrcode | latest | QR code generation for TOTP setup |
-| Validation | Zod | 3.x | Schema validation on client and server |
-| Icons | Lucide React | latest | Icon set |
-| Crypto | Web Crypto API | native | Client-side AES-GCM encryption for vault |
-| Push | web-push | latest | VAPID-based Web Push notifications |
-| Package Manager | bun | latest | Fast installs and script runner |
-| Linting | ESLint | 9.x | Code quality |
-| Formatting | Prettier | 3.x | Code style |
-| Deployment | Vercel | — | Hosting, Cron Jobs, Edge Network |
-| Database Host | MongoDB Atlas | — | Cloud MongoDB, free M0 tier |
-| Mobile | Capacitor | 6.x | Web-to-native wrapper (Phase 7) |
-| Extension | Manifest V3 | — | Chrome + Firefox compatible (Phase 6) |
+| Type generation | `openapi-typescript` | 7.x | Generates `lib/types.gen.ts` from `openapi.yaml` |
+| Package Manager | bun | latest | Installs, scripts, dev server |
+| Deployment | Vercel | — | Hosting only — no serverless functions used |
+| **Shared / Future** ||||
+| Validation | Zod | — | Planned for form + client-side validation (Phase 2+) |
+| Push | Web Push (VAPID) | — | Phase 5 |
+| Mobile | Capacitor | — | Phase 7 |
+| Extension | Manifest V3 | — | Phase 6 |
 
 ---
 
-## Framework — Next.js 16 (App Router)
+## Backend — Go + Gin (`apps/server`)
 
-Next.js handles both the frontend and the standalone API in one project. The App Router enables:
+The entire API, auth system, and database access live in one Go binary. There is no framework
+splitting "API routes" from "the app" — Gin registers every route in
+`internal/routes/routes.go`, and each handler in `internal/handlers/` does validation, business
+logic, and the Mongo query in one function.
 
-- **React Server Components** — fetch data on the server, ship less JS to the client
-- **Route Handlers** — the API backend, replacing Express entirely
-- **Middleware** — runs at the edge for auth checks before any page or API route
-- **File-based routing** — predictable, organized structure
-
-The API is designed as a standalone backend (see ADR-009). The web frontend is one of three clients.
-
----
-
-## Database — MongoDB (native driver)
-
-MongoDB was chosen for its schema flexibility — tasks, events, and credentials all have different shapes and optional fields, which maps naturally to documents.
-
-The **native `mongodb` driver** is used directly. No Mongoose, no Prisma, no Drizzle. This means:
-- Queries are written in TypeScript against the driver's typed API
-- No model abstraction layer between you and the database
-- Full control over indexes, aggregation pipelines, and projections
-- TypeScript interfaces define the document shapes
-
-**MongoDB Atlas** free tier (M0) is sufficient: 512MB storage, shared cluster. More than enough for a personal app with a single user.
+Why Go instead of keeping everything in Next.js:
+- A genuinely standalone API that isn't tied to a JS runtime or a serverless function's request
+  lifecycle
+- Runs as a persistent process — no cold starts, straightforward to reason about for a small,
+  latency-insensitive personal app
+- Deployable independently of the frontend (Railway/Fly.io vs Vercel)
 
 ---
 
-## Auth — Auth.js (NextAuth v5) + Custom Bearer Tokens
+## Database — MongoDB (native Go driver)
 
-Auth.js manages the web session lifecycle:
-- **Credential provider** — username/password + TOTP as a two-step flow
-- **JWT sessions** — stateless, works with Vercel's serverless environment
-- **Middleware integration** — `middleware.ts` uses Auth.js to protect all `(app)` routes
+Same rationale as before the migration: tasks, events, and credentials have different shapes and
+optional fields, which maps naturally to documents. `go.mongodb.org/mongo-driver/v2` is used
+directly — no Mongoose-equivalent, no code generation, no schema migration tool. Document shapes are
+plain Go structs with `bson`/`json` tags in `internal/models/models.go`.
 
-For non-web clients (extension, mobile), a separate `POST /api/auth/totp/validate` endpoint issues a signed JWT bearer token after both auth factors pass. The token is validated by `lib/auth.ts` on every API call.
-
-Both auth paths use the same TOTP validation logic — there is no weaker path.
-
----
-
-## 2FA — otplib (TOTP)
-
-`otplib` implements RFC 6238 (TOTP) and RFC 4226 (HOTP). Used for:
-- Generating the TOTP secret at setup time
-- Generating the `otpauth://` URI embedded in the QR code
-- Validating 6-digit codes submitted by the user during login
-
-TOTP is mandatory. It cannot be disabled. See `docs/security.md` for the full auth flow.
+Local dev uses a Dockerized `mongo:8` container (`infra/docker-compose.yml`). Production points
+`MONGO_URI` at Atlas or any reachable Mongo instance.
 
 ---
 
-## QR Code — qrcode
+## Auth — Custom JWT + TOTP (no Auth.js)
 
-Used once during TOTP setup to render the authenticator QR code in the settings page.
-Generates a data URL (`data:image/png;base64,...`) from the `otpauth://` URI.
-Server-side only — the QR code is generated in an API route and sent to the client as a data URL.
+There is no session framework. Every client — including the web frontend — authenticates the same
+way:
+
+1. `POST /api/v1/auth/login` (email + password) → pending or access JWT
+2. `POST /api/v1/auth/totp/validate` (TOTP code) → access JWT
+3. Every subsequent request: `Authorization: Bearer <access JWT>`
+
+Tokens are signed HS256 JWTs (`golang-jwt/jwt/v5`) with a `type` claim (`pending` | `access`) and
+standard registered claims (`sub`, `iat`, `exp`). `pquerna/otp` implements TOTP (RFC 6238) for 2FA;
+`skip2/go-qrcode` renders the setup QR code server-side as a PNG data URL so the frontend needs no QR
+library.
+
+The web frontend persists its JWT in a plain (non-HttpOnly) `document.cookie` purely so Next.js edge
+middleware can check token *presence* before rendering a protected page — the middleware never
+validates the JWT itself. Real validation happens on the Go server on every data request. See
+`docs/architecture.md` for the full flow.
 
 ---
 
 ## UI — shadcn/ui + Tailwind CSS v4
 
-shadcn/ui is not a component library you install from npm — it's a collection of components you copy into your codebase and own. This means:
-- Full control over styling and behavior
-- No versioning conflicts with the component library
-- Components are in `components/ui/` and can be customized freely
-
-Tailwind CSS v4 introduces a CSS-first configuration (no `tailwind.config.js` needed).
+Unchanged by the backend migration. shadcn/ui components are copied into `apps/web/components/ui/`
+and owned directly — no npm package to version. Tailwind v4 uses CSS-first configuration (no
+`tailwind.config.js`).
 
 **Design constraint: no gradients.** Flat, solid colors from the theme only.
 
 ---
 
-## Validation — Zod
+## Type Safety — OpenAPI → TypeScript
 
-Zod is used in two places:
-1. **Server-side** — validate request bodies in API Route Handlers before touching the database
-2. **Client-side** — validate form input before submitting (shared schemas in `lib/validations.ts`)
-
-Using the same schema in both places eliminates duplication and ensures consistency.
+`openapi.yaml` at the monorepo root is the authoritative API contract. Running
+```bash
+bun run gen:types
+```
+regenerates `apps/web/lib/types.gen.ts` via `openapi-typescript`. This is how the frontend gets typed
+request/response shapes without hand-writing interfaces that can drift from the Go structs.
 
 ---
 
-## Cryptography — Web Crypto API
+## Cryptography — Web Crypto API (Vault, Phase 4)
 
-The password vault uses the browser-native Web Crypto API for all encryption. No third-party crypto library is needed.
-
-The flow:
+Unchanged: the password vault will use the browser-native Web Crypto API entirely client-side.
 1. User enters master password
-2. A `CryptoKey` is derived using **PBKDF2** with a random salt
-3. Each credential is encrypted with **AES-GCM** (256-bit key, random IV per item)
-4. Only the ciphertext, IV, and salt are stored in MongoDB
+2. A `CryptoKey` is derived using PBKDF2 with a random salt
+3. Each credential is encrypted with AES-GCM (256-bit key, random IV per item)
+4. Only ciphertext, IV, and salt are sent to the Go server and stored in MongoDB
 5. Decryption happens entirely in the browser — the server never sees plaintext
 
-This approach means the server is useless to an attacker who only has the database.
+---
+
+## Push Notifications — web-push (VAPID, Phase 5)
+
+Not yet implemented. When it lands: VAPID keys identify the server to push services, subscriptions
+are stored in `push_subscriptions` (already modeled and has a working `POST /api/v1/push/subscribe`
+endpoint), and an external scheduler calls `POST /api/v1/cron/notify` on the Go server — there is no
+Vercel Cron involved since the API isn't hosted on Vercel.
 
 ---
 
-## Push Notifications — web-push (VAPID)
+## Package Manager — bun (frontend only)
 
-Web Push notifications allow the browser (and PWA) to receive notifications even when the app is not open.
-
-- VAPID keys identify the server to the push service
-- Vercel Cron Jobs trigger the notification logic on a schedule
-- Subscriptions are stored per-user in the `users` collection
-- On mobile (Capacitor), native push replaces web push (Phase 7)
+`apps/web` and the monorepo root use bun (`bun.lock`). `apps/server` is Go — it uses `go.mod`/`go.sum`
+and the standard `go` toolchain (`go mod tidy`, `go build`), not bun.
 
 ---
 
-## Package Manager — bun
+## Deployment
 
-The project uses bun (evidenced by `bun.lock`). Use `bun install`, `bun dev`, `bun build`, etc.
-Never use npm, yarn, or pnpm.
+| App | Platform | Trigger |
+|---|---|---|
+| `apps/web` | Vercel | Push to `main`, Root Directory `apps/web` |
+| `apps/server` | Docker → Railway or Fly.io | Manual/CI build of `apps/server/Dockerfile` |
+| MongoDB | Atlas (prod) / Docker `mongo:8` (local) | — |
 
----
-
-## Deployment — Vercel
-
-Vercel is the deployment target. Key features used:
-- **Auto-deploy from GitHub** — push to `main`, it deploys
-- **Environment Variables** — set in the Vercel dashboard, available at runtime
-- **Vercel Cron Jobs** — defined in `vercel.json`, used to trigger scheduled notifications
-- **Edge Middleware** — `middleware.ts` runs at the edge for fast auth checks
-
-The MongoDB Atlas connection string is stored as `MONGODB_URI` in Vercel's environment variables.
+There are two independent deploy pipelines, not one. A change to `apps/server` does not trigger a
+Vercel deploy and vice versa.

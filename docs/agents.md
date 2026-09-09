@@ -81,68 +81,88 @@ Use flat, solid colors only. The UI should be clean and minimal.
 
 ## Code Rules
 
+The backend (`apps/server`, Go) and frontend (`apps/web`, Next.js) are separate applications with
+separate rules. **There is no `app/api/**` in `apps/web` — it does not exist and should not be
+recreated.** All business logic and database access live exclusively in `apps/server`. See
+`docs/architecture.md` and ADR-011 in `docs/technical-decisions.md` for why.
+
 ### No ORM — ever
-Use only the native `mongodb` driver. Do not install or suggest Mongoose, Prisma, Drizzle,
-or any other ORM or ODM. This is a firm architectural decision (see ADR-001).
+Use only the native `go.mongodb.org/mongo-driver/v2` driver in `apps/server`. Do not install or
+suggest an ODM. This is a firm architectural decision (see ADR-001).
 
-### TypeScript strictness
-- All new code must be properly typed — no `any` unless absolutely unavoidable
-- Document the reason in a comment if `any` is used
-- Define document shapes as TypeScript interfaces in `lib/types.ts`
+### Go handler structure — mandatory pattern
+Every handler in `apps/server/internal/handlers/*.go` follows this order (see any existing handler
+for a concrete example):
 
-### Validation belongs in two places only
-- **Server:** Zod schema validation at the top of every API route handler, before any DB call
-- **Client:** The same Zod schema reused in form validation
-- Do not validate in the database layer or in component logic
+```go
+func (h *Handler) DoThing(c *gin.Context) {
+    // 1. Get the caller's userID from context (set by RequireAuth/RequirePending middleware —
+    //    the route registration in routes.go is what actually enforces auth, not this line)
+    userID := c.GetString(middleware.ContextKeyUserID)
+    oid, err := bson.ObjectIDFromHex(userID)
+    if err != nil { c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"}); return }
 
-### API route structure — mandatory pattern
-Every API route handler must follow this exact order:
+    // 2. Bind + validate the request body (Gin `binding` tags)
+    var body struct{ /* ... */ }
+    if err := c.ShouldBindJSON(&body); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
+    }
 
-```ts
-export async function GET(request: Request) {
-  // 1. Validate caller (session cookie OR bearer token)
-  const caller = await validateCaller(request)  // throws 401 if invalid
+    // 3. Business logic + DB access, always filtered by user_id
+    // ...
 
-  // 2. Validate request body / params (Zod)
-  const body = schema.parse(await request.json())
-
-  // 3. Business logic + DB access
-  const db = await getDb()
-  // ...
-
-  // 4. Return response
-  return Response.json({ ... })
+    // 4. Return response
+    c.JSON(http.StatusOK, result)
 }
 ```
 
-Never skip step 1. Never put DB logic before step 2.
+Every route must be registered under `RequireAuth`, `RequirePending`, or `RequireCron` in
+`internal/routes/routes.go` — a route outside all three is a security bug. Every query on
+user-owned data must filter by `user_id` (or `_id` + `user_id` for single-resource lookups) — this
+is what makes the schema multi-user-safe (see ADR-012).
+
+### TypeScript strictness (apps/web)
+- All new code must be properly typed — no `any` unless absolutely unavoidable
+- Document the reason in a comment if `any` is used
+- Use the generated types in `apps/web/lib/types.gen.ts` (from `openapi.yaml`) for API shapes —
+  don't hand-write duplicate interfaces for things the API already returns
+
+### Frontend — pure client, no API routes, no DB access
+- `apps/web` never touches MongoDB and never will. If a page needs data, it calls the Go API via
+  `fetch` with `Authorization: Bearer <token>` (token from `lib/session.ts`)
+- Every data-fetching page/component is a Client Component (`"use client"`) — there is no
+  server-side data fetching to a database to fall back to
+- Zod validation (planned for `lib/validations.ts`, Phase 2+) is for client-side form validation
+  only — request validation happens server-side in the Go handler regardless
 
 ### Authentication — never bypass or weaken
-- The app uses two-factor authentication: password + TOTP. Both factors are always required.
+- The app uses two-factor authentication: password + TOTP. Both factors are always required
 - Do not add a path to bypass TOTP "for development" or "for testing"
 - Do not create mock auth or skip TOTP in any code path, including scripts
-- The TOTP secret is stored encrypted in MongoDB — never store it in plaintext
-- `validateCaller()` in `lib/auth.ts` handles both session cookies (web) and bearer tokens
-  (extension/mobile) — always use this function, never roll your own auth check
+- Auth is entirely in `apps/server` — `middleware.RequireAuth`/`RequirePending` in
+  `internal/middleware/auth.go`. Never roll a separate auth check in a handler
+- `apps/web` has no auth logic beyond storing/reading the token (`lib/session.ts`) and an edge
+  presence-check (`middleware.ts`) — it never validates the JWT itself
 
 ### Standalone API principle
-- The API (`/api/**`) must be client-agnostic. It must not return HTML, redirects, or
-  client-specific responses
-- Any data the web frontend needs must be available via the API, accessible to extension
-  and mobile with a bearer token too
-- Do not add server-side logic that only works for the web client and not for bearer token callers
-- See ADR-009 in `docs/technical-decisions.md`
+- The API (`apps/server`, `/api/v1/**`) must be client-agnostic. It must not return HTML,
+  redirects, or client-specific responses
+- Any data the web frontend needs must be available via the API, accessible to extension and
+  mobile with the same bearer token mechanism — nothing web-only
+- See ADR-009 and ADR-011 in `docs/technical-decisions.md`
 
-### Password vault — client-side encryption only
-- Decryption logic must only exist in `lib/crypto.ts` and the browser extension
-- No server-side function may decrypt credential data
-- Never log credential plaintext in the server or the browser console
+### Password vault — client-side encryption only (Phase 4)
+- Decryption logic must only exist in `apps/web/lib/crypto.ts` and the browser extension
+- No Go handler may decrypt credential data — see `internal/handlers/credentials.go` for the
+  current (correct) pattern of storing/returning ciphertext verbatim
+- Never log credential plaintext, server or client
 - Never pass the master password or derived CryptoKey to an API endpoint
 - See `docs/security.md` for the full rule set
 
-### Connection singleton
-- Always use `getDb()` from `lib/db.ts` — never instantiate `MongoClient` directly in a route
-- Never use `client.db()` outside of `lib/db.ts`
+### Connection singleton (apps/server)
+- Always use the `Handler.col()` helper (`internal/handlers/handler.go`) to get a collection —
+  never instantiate a new `mongo.Client` inside a handler
+- The singleton connection lives in `internal/db/db.go` (`sync.Once`) — don't add a second one
 
 ### No unnecessary abstractions
 - Do not create utility functions, helpers, or wrappers for logic used only once
@@ -166,7 +186,8 @@ Never skip step 1. Never put DB logic before step 2.
 
 ## Package Manager
 
-This project uses **bun**. Always use:
+`apps/server` is a Go module — use `go mod tidy`, `go build`, `go run`, not bun. Everything else
+(the workspace root and `apps/web`) uses **bun**. Always use:
 ```bash
 bun install
 bun add <package>
@@ -183,11 +204,12 @@ Never use `npm`, `yarn`, or `pnpm`.
 
 | Item | Convention |
 |---|---|
-| Component files | `kebab-case.tsx` |
-| Utility / lib files | `kebab-case.ts` |
-| API route files | `route.ts` (fixed by Next.js) |
+| Component files (`apps/web`) | `kebab-case.tsx` |
+| Utility / lib files (`apps/web`) | `kebab-case.ts` |
+| Go files (`apps/server`) | one file per resource in `internal/handlers/`, e.g. `tasks.go` |
 | Type names | `PascalCase` |
-| Function names | `camelCase` |
+| Function names (TS) | `camelCase` |
+| Function names (Go) | `PascalCase` exported / `camelCase` unexported |
 | Constants | `SCREAMING_SNAKE_CASE` |
 
 ---

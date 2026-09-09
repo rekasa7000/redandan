@@ -5,33 +5,45 @@ Each phase produces a working, usable increment of the app.
 
 ---
 
-## Phase 1 — Foundation
+## Phase 1 — Foundation ✅ Complete
 
 **Goal:** The app boots, connects to MongoDB, requires two-factor login to access anything,
 and exposes a standalone API that all three clients can authenticate against.
 
-**Deliverables:**
-- [ ] `lib/db.ts` — MongoDB singleton with connection pooling
-- [ ] `lib/types.ts` — TypeScript interfaces for all document types
-- [ ] `lib/auth.ts` — Auth.js config + `validateCaller()` helper (cookie + bearer)
-- [ ] `lib/totp.ts` — TOTP helpers wrapping `otplib` (generate secret, verify code)
-- [ ] `middleware.ts` — Auth guard for all `(app)` routes
-- [ ] `app/api/auth/login/route.ts` — Step 1: password validation
-- [ ] `app/api/auth/totp/validate/route.ts` — Step 2: TOTP validation, issues session or JWT
-- [ ] `app/api/auth/totp/setup/route.ts` — Generates secret + QR code (settings use)
-- [ ] `app/api/auth/totp/confirm/route.ts` — Confirms TOTP setup
-- [ ] `app/api/auth/backup-code/route.ts` — Uses a backup code in place of TOTP
-- [ ] `app/api/auth/logout/route.ts` — Invalidates session
-- [ ] `app/(auth)/login/page.tsx` — Two-step login UI (password → TOTP code)
-- [ ] `app/(app)/layout.tsx` — Authenticated layout shell (nav, sidebar stubs)
-- [ ] `app/(app)/settings/page.tsx` — TOTP setup UI (QR code + backup codes)
-- [ ] `scripts/seed.ts` — Seeds admin user, hashed password, default contexts
-- [ ] `.env.example` — Documents all required environment variables
-- [ ] `vercel.json` — Base config (cron placeholder, CORS headers)
+Shipped differently than originally planned here: the API was built as a standalone **Go + Gin**
+server (`apps/server`) instead of Next.js Route Handlers, with a custom JWT issuer instead of
+Auth.js. `apps/web` ended up as a pure frontend with zero database access. See ADR-011 in
+`technical-decisions.md` for why, and `docs/architecture.md` / `docs/api.md` for what actually
+exists. The original checklist below (`lib/db.ts`, `app/api/**`, Auth.js) was never built and should
+not be — it's kept here struck through for history.
 
-**Done when:** You can open the app, complete the two-step login (password + TOTP), see a blank
-dashboard, and receive a `401` on any API endpoint when calling without a valid session or token.
-The extension can obtain a bearer token by posting credentials + TOTP to the API.
+**Actually delivered:**
+- [x] `apps/server/internal/db/db.go` — MongoDB singleton (Go, `sync.Once`)
+- [x] `apps/server/internal/models/models.go` — Go document structs for all collections
+- [x] `apps/server/internal/middleware/auth.go` — JWT validation (`RequireAuth`, `RequirePending`, `RequireCron`)
+- [x] `apps/server/internal/handlers/auth.go` — Login, TOTP setup/confirm/validate, backup codes, change/forgot password, logout
+- [x] `apps/server/internal/routes/routes.go` — Full route registration, `/api/v1/**`
+- [x] `apps/web/middleware.ts` — Edge auth guard (checks token presence) for all `(app)` routes
+- [x] `apps/web/lib/session.ts` — `reliva_token` cookie read/write/clear
+- [x] `apps/web/app/(auth)/login/page.tsx` — Two-step login UI (password → TOTP/backup code)
+- [x] `apps/web/app/(auth)/forgot-password/page.tsx`
+- [x] `apps/web/app/(app)/layout.tsx` — Authenticated layout shell
+- [x] `apps/web/app/(app)/settings/page.tsx` — TOTP setup UI (QR + backup codes), change password, logout
+- [x] `apps/server/cmd/seed/main.go` — Seeds a user + default contexts; per-email, supports multiple accounts (ADR-012)
+- [x] `.env.example` × 3 (`apps/server`, `apps/web`, `infra`) — documents all required env vars
+- [x] `infra/docker-compose.yml` — MongoDB + server + one-shot seed service for local dev
+- [x] `openapi.yaml` + `bun run gen:types` → `apps/web/lib/types.gen.ts`
+
+~~- [ ] `lib/db.ts` — MongoDB singleton with connection pooling~~ (Go, not Next.js — see above)
+~~- [ ] `lib/auth.ts` — Auth.js config + `validateCaller()` helper~~ (never built — custom Go JWT instead)
+~~- [ ] `lib/totp.ts` — TOTP helpers wrapping `otplib`~~ (Go's `pquerna/otp`, server-side only)
+~~- [ ] `app/api/auth/**/route.ts`~~ (no Next.js API routes exist or will exist)
+~~- [ ] `vercel.json` — cron placeholder~~ (no cron on Vercel — the API isn't hosted there)
+
+**Done when:** ✅ You can open the app, complete the two-step login (password + TOTP), see a
+dashboard placeholder, and receive a `401` from the Go API on any protected endpoint without a
+valid token. The extension (once built, Phase 6) will obtain a bearer token the same way the web
+frontend does — posting credentials + TOTP to the same API.
 
 ---
 
@@ -39,21 +51,24 @@ The extension can obtain a bearer token by posting credentials + TOTP to the API
 
 **Goal:** Full task management across multiple contexts. All data flows through the standalone API.
 
-**Deliverables:**
-- [ ] `app/api/contexts/**` — Contexts CRUD
-- [ ] `app/api/tasks/**` — Tasks CRUD with filtering
-- [ ] `app/(app)/page.tsx` — Dashboard: today's tasks + upcoming
-- [ ] `app/(app)/tasks/page.tsx` — Task list with context/status/priority filters
-- [ ] `app/(app)/tasks/new/page.tsx` — Create task form
-- [ ] `app/(app)/tasks/[id]/page.tsx` — Task detail / edit
-- [ ] `components/tasks/task-card.tsx`
-- [ ] `components/tasks/task-form.tsx`
-- [ ] `components/tasks/task-filters.tsx`
-- [ ] `components/shared/sidebar.tsx` — Context list
-- [ ] `components/shared/bottom-nav.tsx` — Mobile bottom nav
-- [ ] `lib/validations.ts` — Zod schemas for tasks and contexts
+**Backend — already done** (built ahead of the frontend during Phase 1's Go server work):
+- [x] `apps/server/internal/handlers/contexts.go` — Contexts CRUD (`/api/v1/contexts/**`)
+- [x] `apps/server/internal/handlers/tasks.go` — Tasks CRUD with status/context filtering (`/api/v1/tasks/**`)
 
-**Done when:** You can create a task under "Job 1", mark it in-progress, set a deadline, and see it on the dashboard. The same task is fetchable via `GET /api/tasks` with a bearer token.
+**Frontend — remaining work:**
+- [ ] `apps/web/lib/api.ts` — typed fetch wrapper around the Go API (using `lib/types.gen.ts`)
+- [ ] `apps/web/lib/validations.ts` — Zod schemas for task/context forms
+- [ ] `apps/web/app/(app)/page.tsx` — Dashboard: today's tasks + upcoming (currently a placeholder)
+- [ ] `apps/web/app/(app)/tasks/page.tsx` — Task list with context/status/priority filters
+- [ ] `apps/web/app/(app)/tasks/new/page.tsx` — Create task form
+- [ ] `apps/web/app/(app)/tasks/[id]/page.tsx` — Task detail / edit
+- [ ] `apps/web/components/tasks/task-card.tsx`
+- [ ] `apps/web/components/tasks/task-form.tsx`
+- [ ] `apps/web/components/tasks/task-filters.tsx`
+- [ ] `apps/web/components/shared/sidebar.tsx` — Context list
+- [ ] `apps/web/components/shared/bottom-nav.tsx` — Mobile bottom nav
+
+**Done when:** You can create a task under "Work", mark it in-progress, set a deadline, and see it on the dashboard. The same task is fetchable via `GET /api/v1/tasks` with a bearer token — that part already works today.
 
 ---
 
@@ -61,15 +76,19 @@ The extension can obtain a bearer token by posting credentials + TOTP to the API
 
 **Goal:** A unified timeline showing tasks with deadlines, payroll dates, and personal events.
 
-**Deliverables:**
-- [ ] `app/api/events/**` — Events CRUD
-- [ ] `app/(app)/calendar/page.tsx` — Calendar view (month + agenda)
-- [ ] `components/calendar/calendar-view.tsx`
-- [ ] `components/calendar/event-item.tsx`
-- [ ] Tasks with deadlines rendered on the calendar alongside events
-- [ ] Recurring event support (payroll monthly, vacation annually)
+**Backend — already done:**
+- [x] `apps/server/internal/handlers/events.go` — Events CRUD (`/api/v1/events/**`)
 
-**Done when:** You can add "Payroll — Job 1" as a monthly recurring event, add a "Cebu trip" multi-day event, and see both alongside task deadlines on the calendar.
+**Frontend — remaining work:**
+- [ ] `apps/web/app/(app)/calendar/page.tsx` — Calendar view (month + agenda)
+- [ ] `apps/web/components/calendar/calendar-view.tsx`
+- [ ] `apps/web/components/calendar/event-item.tsx`
+- [ ] Tasks with deadlines rendered on the calendar alongside events
+- [ ] Recurring event support (payroll monthly, vacation annually) — the `Event.Recurrence` field
+      exists in the Go model but isn't acted on by any handler yet; recurrence expansion will need
+      to be built, either in the Go handler or client-side
+
+**Done when:** You can add "Payroll — Work" as a monthly recurring event, add a "Cebu trip" multi-day event, and see both alongside task deadlines on the calendar.
 
 ---
 
@@ -77,18 +96,20 @@ The extension can obtain a bearer token by posting credentials + TOTP to the API
 
 **Goal:** Encrypted credential storage with a master-password-gated vault UI.
 
-**Deliverables:**
-- [ ] `lib/crypto.ts` — PBKDF2 key derivation + AES-GCM encrypt/decrypt utilities
-- [ ] `hooks/use-master-key.ts` — In-memory key management, lock/unlock
-- [ ] `app/api/credentials/**` — Credentials CRUD (store/return ciphertext only)
-- [ ] `app/(app)/vault/page.tsx` — Credential list
-- [ ] `app/(app)/vault/new/page.tsx` — Add credential (encrypts before POST)
-- [ ] `app/(app)/vault/[id]/page.tsx` — View credential (decrypt on demand)
-- [ ] `components/vault/master-password-gate.tsx` — Unlock prompt
-- [ ] `components/vault/credential-card.tsx` — Copy-to-clipboard
-- [ ] `components/vault/password-generator.tsx` — Random strong password generator
+**Backend — already done:**
+- [x] `apps/server/internal/handlers/credentials.go` — Credentials CRUD, stores/returns ciphertext only (`/api/v1/credentials/**`)
 
-**Done when:** You can add a GitHub credential, lock the vault, re-enter the master password, and see the decrypted password. MongoDB shows only ciphertext — no plaintext visible anywhere in Atlas.
+**Frontend — remaining work:**
+- [ ] `apps/web/lib/crypto.ts` — PBKDF2 key derivation + AES-GCM encrypt/decrypt utilities
+- [ ] `apps/web/hooks/use-master-key.ts` — In-memory key management, lock/unlock
+- [ ] `apps/web/app/(app)/vault/page.tsx` — Credential list
+- [ ] `apps/web/app/(app)/vault/new/page.tsx` — Add credential (encrypts before POST)
+- [ ] `apps/web/app/(app)/vault/[id]/page.tsx` — View credential (decrypt on demand)
+- [ ] `apps/web/components/vault/master-password-gate.tsx` — Unlock prompt
+- [ ] `apps/web/components/vault/credential-card.tsx` — Copy-to-clipboard
+- [ ] `apps/web/components/vault/password-generator.tsx` — Random strong password generator
+
+**Done when:** You can add a GitHub credential, lock the vault, re-enter the master password, and see the decrypted password. MongoDB shows only ciphertext — no plaintext visible anywhere.
 
 ---
 
@@ -96,16 +117,18 @@ The extension can obtain a bearer token by posting credentials + TOTP to the API
 
 **Goal:** Proactive alerts for deadlines, payroll, and overdue tasks.
 
-**Deliverables:**
-- [ ] VAPID key generation (one-time: `npx web-push generate-vapid-keys`)
-- [ ] `lib/push.ts` — Web Push send utility
-- [ ] `app/api/push/subscribe/route.ts` — Save push subscription
-- [ ] `app/api/push/send/route.ts` — Internal trigger
-- [ ] `app/api/cron/notify/route.ts` — Cron handler
-- [ ] `vercel.json` — Cron schedule (daily 8am)
-- [ ] `app/api/notifications/**` — Notification history CRUD
-- [ ] `components/shared/notification-bell.tsx` — Unread badge in nav
-- [ ] Service worker registration in the web app
+**Backend — already done:**
+- [x] `apps/server/internal/handlers/notifications.go` — `GET /api/v1/notifications`, `PATCH /api/v1/notifications/:id`, `POST /api/v1/push/subscribe`
+- [x] `apps/server/internal/handlers/cron.go` — `POST /api/v1/cron/notify`, creates a notification per task due today across all users
+
+**Backend — remaining work:**
+- [ ] VAPID key generation (one-time: `npx web-push generate-vapid-keys`) and wiring `VAPID_*` env vars through to an actual send
+- [ ] Web Push send logic — `push_subscriptions` are stored, but nothing sends to them yet; `cron.go` only creates in-app `notifications` documents today
+- [ ] An external scheduler configured to call `POST /api/v1/cron/notify` daily (Railway cron / a scheduled GitHub Action — **not** Vercel Cron, since the API isn't hosted on Vercel)
+
+**Frontend — remaining work:**
+- [ ] Service worker registration + push subscription flow in `apps/web`
+- [ ] `apps/web/components/shared/notification-bell.tsx` — Unread badge in nav
 
 **Done when:** At 8am you receive a push notification listing tasks due today. The notification bell in the app shows the history.
 
@@ -159,7 +182,9 @@ The extension can obtain a bearer token by posting credentials + TOTP to the API
 - **Export / backup** — JSON export of all data for personal archive
 - **iOS build** — Requires macOS + Xcode
 - **WebAuthn / Passkeys** — Hardware key as a TOTP replacement (higher security ceiling)
-- **Multi-user** — If Reliva ever becomes a product for others
+- **Self-serve signup** — The data model is already multi-user (ADR-012); what's still missing to
+  become a real product for others is signup, per-account roles, rate limiting, and a unique index
+  on `users.email`
 
 ---
 
@@ -167,11 +192,11 @@ The extension can obtain a bearer token by posting credentials + TOTP to the API
 
 | Phase | Status |
 |---|---|
-| Phase 1 — Foundation + 2FA | Not started |
-| Phase 2 — Task Tracker | Not started |
-| Phase 3 — Calendar & Events | Not started |
-| Phase 4 — Password Vault | Not started |
-| Phase 5 — Notifications | Not started |
+| Phase 1 — Foundation + 2FA | ✅ Complete |
+| Phase 2 — Task Tracker | Backend done; frontend in progress |
+| Phase 3 — Calendar & Events | Backend done; frontend not started |
+| Phase 4 — Password Vault | Backend done; frontend not started |
+| Phase 5 — Notifications | Backend partially done (no push send yet); frontend not started |
 | Phase 6 — Browser Extension | Not started |
 | Phase 7 — Mobile | Not started |
 

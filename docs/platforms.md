@@ -1,18 +1,21 @@
 # Platforms
 
-Reliva runs on three platforms from a single codebase.
-Each platform consumes the same Vercel-hosted API.
+Reliva runs on three platforms from a single monorepo. Each platform consumes the same standalone
+Go API (`apps/server`) — none of them is hosted on the same platform as the API itself.
 
 ---
 
 ## Platform 1 — Web (Primary)
 
-**Stack:** Next.js 16 on Vercel
+**Stack:** Next.js 16 (pure frontend) on Vercel
+**API:** Go server, deployed separately (Railway/Fly.io) — see `docs/architecture.md`
 **URL:** `https://reliva.vercel.app` (or custom domain)
-**Status:** Phase 1–5
+**Status:** Phase 1 done (auth); Phase 2+ in progress
 
 The web app is the primary development target and the source of truth for UI and features.
-All other platforms derive from it.
+All other platforms derive from it. It has no API routes and no database access — every page that
+needs data is a Client Component calling the Go API with `fetch` and an `Authorization: Bearer`
+header.
 
 ### Responsive Design Strategy
 
@@ -29,46 +32,37 @@ Avoid fixed pixel widths. Use `max-w-*` containers.
 
 ### PWA Capability
 
-Before Capacitor (Phase 7), the web app can be installed as a Progressive Web App on Android via Chrome:
-
+Before Capacitor (Phase 7), the web app can be installed as a Progressive Web App on Android via
+Chrome:
 - Add a `public/manifest.json` with app name, icons, `display: standalone`
 - Register a service worker for offline caching (optional, basic shell caching)
 - This gives a "homescreen icon" experience without building an APK
 
 ### Vercel Deployment
 
-Deploys automatically on push to `main`.
-
-Configuration in `vercel.json`:
-```json
-{
-  "crons": [
-    {
-      "path": "/api/cron/notify",
-      "schedule": "0 8 * * *"
-    }
-  ]
-}
-```
+Deploys automatically on push to `main`. Project Root Directory is set to `apps/web` in Vercel's
+project settings. There is no `vercel.json` cron config for notifications — that would only matter
+if the API itself ran on Vercel, and it doesn't (see `docs/architecture.md`).
 
 ---
 
 ## Platform 2 — Browser Extension
 
 **Targets:** Chrome (Manifest V3), Firefox (Manifest V3)
-**Status:** Phase 6
-**Location:** `extension/` folder in the repo
+**Status:** Phase 6 — not started, `apps/extension/` is a placeholder
+**Location:** `apps/extension/` in the repo
 
-### What the Extension Does
+### What the Extension Will Do
 
-1. **Password Autofill** — Detects login forms on any page, fetches matching credentials from the API, fills username and password with one click
+1. **Password Autofill** — Detects login forms on any page, fetches matching credentials from the
+   Go API, fills username and password with one click
 2. **Quick Task Add** — Create a task from any tab without opening the full app
 3. **Notification Badge** — Shows count of overdue tasks / unread notifications on the extension icon
 
-### Architecture
+### Planned Architecture
 
 ```
-extension/
+apps/extension/
   manifest.json           ← Manifest V3 config
   popup/
     index.html            ← Popup UI (shown when clicking the extension icon)
@@ -76,31 +70,34 @@ extension/
   background/
     service-worker.ts     ← Token refresh, badge update
   content/
-    autofill.ts           ← Injected into every page, detects login forms
+    autofill.ts            ← Injected into every page, detects login forms
 ```
 
-### Auth Flow in Extension
+### Planned Auth Flow in Extension
 
-1. First use: popup shows "Connect to Reliva" button
-2. User clicks → opens `https://reliva.vercel.app/api/auth/extension-token` in a tab
-3. App returns a long-lived token (stored in `chrome.storage.local`)
-4. Extension uses this token as a `Bearer` header on all API calls
-5. Token is refreshed by the background service worker before expiry
+Same two-step flow as every other client — no special extension-only endpoint:
+1. Popup collects email + password → `POST /api/v1/auth/login` on the Go server
+2. Popup collects TOTP code → `POST /api/v1/auth/totp/validate`
+3. Resulting access JWT is stored in `chrome.storage.local`
+4. Every subsequent API call sends `Authorization: Bearer <token>`
+5. Background service worker prompts re-login before the 30-day token expires (there's no silent
+   refresh endpoint — a new login is required)
 
-### Autofill Flow
+### Planned Autofill Flow
 
 1. Content script runs on every page load
 2. Detects `<input type="password">` — signals a login form
-3. Fetches `GET /api/credentials?site=<current-domain>` with the stored token
+3. Fetches `GET /api/v1/credentials` with the stored token, matches by domain client-side (the API
+   has no `?site=` filter today — see `docs/api.md`)
 4. If matches found, shows a small Reliva icon inside the input field
-5. User clicks icon → popup shows matched credentials → user clicks to fill
+5. User clicks icon → popup shows matched credentials, decrypted client-side → user clicks to fill
 
 ### Cross-Browser Notes
 
 Firefox and Chrome both support Manifest V3 but with some differences:
-- Firefox uses `browser.*` namespace (polyfilled with `webextension-polyfill`)
+- Firefox uses the `browser.*` namespace (polyfilled with `webextension-polyfill`)
 - `service_worker` in `background` is Chrome; Firefox uses `scripts` instead
-- The `manifest.json` can include Firefox-specific keys under `browser_specific_settings`
+- `manifest.json` can include Firefox-specific keys under `browser_specific_settings`
 
 Build with `esbuild` for fast, simple bundling. No webpack needed.
 
@@ -108,13 +105,11 @@ Build with `esbuild` for fast, simple bundling. No webpack needed.
 
 ## Platform 3 — Mobile (Android)
 
-**Stack:** Capacitor 6 wrapping the Next.js build
+**Stack:** Capacitor wrapping a static Next.js export
 **Target:** Android (personal sideload)
-**Status:** Phase 7
+**Status:** Phase 7 — not started
 
-### How Capacitor Works
-
-Capacitor is a bridge that runs a web app inside a native WebView and provides JavaScript APIs for native device features.
+### How Capacitor Will Work
 
 ```
 Next.js build (static export)
@@ -123,19 +118,18 @@ Next.js build (static export)
   → Native APIs available via @capacitor/* plugins
 ```
 
-### Setup Steps (Phase 7)
+### Planned Setup Steps (Phase 7)
 
-1. Set `output: 'export'` in `next.config.ts` (static HTML/CSS/JS output)
-2. Run `next build` → generates `out/` folder
-3. Install Capacitor: `bun add @capacitor/core @capacitor/cli`
-4. Initialize: `bun cap init reliva com.personal.reliva`
-5. Set `webDir: 'out'` in `capacitor.config.ts`
-6. Add Android: `bun cap add android`
-7. Sync: `bun cap sync`
-8. Open Android Studio: `bun cap open android`
-9. Build APK → sideload onto phone
+1. Set `output: 'export'` in `apps/web/next.config.ts`
+2. `next build` → generates `out/`
+3. `bun add @capacitor/core @capacitor/cli`
+4. `bun cap init reliva com.personal.reliva`
+5. Set `webDir: 'out'` in `capacitor.config.ts`, and `server.url` to the deployed Go API's frontend
+   origin (i.e. still the Vercel URL — the app loads the web UI, which then calls the Go API)
+6. `bun cap add android` → `bun cap sync` → `bun cap open android`
+7. Build APK → sideload
 
-### Native Features Used
+### Planned Native Features
 
 | Plugin | Purpose |
 |---|---|
@@ -147,34 +141,26 @@ Next.js build (static export)
 
 ### API Connectivity
 
-The mobile app calls the same Vercel API as the web app.
-The `capacitor.config.ts` sets the server URL:
+The mobile app calls the same Go API as the web app, using the same bearer-token auth — not a
+session cookie (Capacitor's WebView doesn't share cookies with the API's origin anyway). The token
+is stored in Capacitor's secure storage, not a cookie.
+
 ```ts
 const config: CapacitorConfig = {
   appId: 'com.personal.reliva',
   appName: 'Reliva',
   webDir: 'out',
-  server: {
-    url: 'https://reliva.vercel.app',
-    cleartext: false
-  }
-}
+  server: { url: 'https://reliva.vercel.app', cleartext: false },
+};
 ```
 
 This means the app requires an internet connection. Offline support is not a Phase 7 goal.
 
 ### Static Export Constraints
 
-When Next.js uses `output: 'export'`:
-- API routes do **not** run in the static export
-- All API calls go to the Vercel deployment (not local)
-- Dynamic routes must have `generateStaticParams()` or use client-side fetching
-- Server Components that fetch data must be converted to client components with `useEffect` + API calls, OR data is fetched server-side at build time (not ideal for dynamic personal data)
-
-**Resolution:** For the mobile build, use a hybrid approach:
-- Pages are static shells
-- Data is fetched client-side via the API on mount
-- This is acceptable for a personal app (not a public-facing performance-critical site)
+When Next.js uses `output: 'export'`, all data-fetching must already be client-side — which is
+already true today, since `apps/web` has no server components doing data fetching and no API routes
+to lose. Phase 7 should be a smaller lift than originally scoped for exactly this reason.
 
 ---
 
@@ -187,4 +173,4 @@ When Next.js uses `output: 'export'`:
 | Calendar | Full | No | Full |
 | Push notifications | Via Web Push | No | Native |
 | Offline support | No | No | No |
-| Auth method | Session cookie | Stored JWT token | Session cookie (WebView) |
+| Auth method | Bearer JWT (cookie-persisted) | Bearer JWT (`chrome.storage.local`) | Bearer JWT (Capacitor secure storage) |

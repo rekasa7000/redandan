@@ -27,19 +27,24 @@ Read this index first, then navigate to the relevant document.
 
 ## Quick Reference
 
-**Current phase:** Phase 1 — Foundation
+**Current phase:** Phase 1 complete (foundation, auth, multi-user data model) — Phase 2 (Task
+Tracker) in progress. See `roadmap.md`.
 
 **Stack at a glance:**
-- Next.js 16 + React 19 + TypeScript
-- MongoDB (native driver, no ORM)
-- Auth.js (NextAuth v5)
+- Backend: Go 1.25 + Gin, MongoDB (native driver, no ORM), custom JWT + TOTP auth — standalone,
+  deployed independently of the frontend (Railway/Fly.io)
+- Frontend: Next.js 16 + React 19 + TypeScript, pure client calling the Go API — no API routes, no
+  DB access, no Auth.js
 - Tailwind CSS v4 + shadcn/ui
-- Deployed on Vercel
+- Deployed: `apps/web` on Vercel, `apps/server` on Railway/Fly.io as a Docker container
 
-**Three platforms, one codebase:**
+**Three platforms, one Go API:**
 - Web → Next.js on Vercel
-- Mobile → Capacitor (Phase 7)
-- Browser Extension → Manifest V3 (Phase 6)
+- Mobile → Capacitor (Phase 7, not started)
+- Browser Extension → Manifest V3 (Phase 6, not started)
+
+See `docs/architecture.md` and ADR-011 in `technical-decisions.md` for why the backend is a separate
+Go server rather than Next.js API routes.
 
 ---
 

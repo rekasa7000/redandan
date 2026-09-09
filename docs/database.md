@@ -2,286 +2,278 @@
 
 ## Overview
 
-- **Database:** MongoDB 7.x
-- **Host:** MongoDB Atlas (free M0 tier)
-- **Driver:** `mongodb` (native Node.js driver, no ORM)
-- **Connection:** Singleton in `lib/db.ts`, pooled across serverless function invocations
+- **Database:** MongoDB 8.x
+- **Host:** Docker (`mongo:8`) locally via `infra/docker-compose.yml`; MongoDB Atlas or any reachable
+  MongoDB instance in production, via `MONGO_URI`
+- **Driver:** `go.mongodb.org/mongo-driver/v2` (native Go driver, no ORM)
+- **Connection:** Singleton in `apps/server/internal/db/db.go`, connected once via `sync.Once` and
+  reused across every request
+- **Owner:** Only `apps/server` ever talks to MongoDB. No other client (web, extension, mobile)
+  connects to the database directly
 
 ---
 
 ## Connection Pattern
 
-```ts
-// lib/db.ts
-import { MongoClient, Db } from 'mongodb'
+```go
+// internal/db/db.go
+var (
+    client  *mongo.Client
+    once    sync.Once
+    initErr error
+)
 
-const uri = process.env.MONGODB_URI!
-const options = {}
-
-let client: MongoClient
-let db: Db
-
-if (process.env.NODE_ENV === 'development') {
-  // In dev, reuse the client across hot reloads
-  if (!(global as any)._mongoClient) {
-    (global as any)._mongoClient = new MongoClient(uri, options)
-  }
-  client = (global as any)._mongoClient
-} else {
-  client = new MongoClient(uri, options)
-}
-
-export async function getDb(): Promise<Db> {
-  if (!db) {
-    await client.connect()
-    db = client.db('reliva')
-  }
-  return db
+func Connect(uri string) (*mongo.Client, error) {
+    once.Do(func() {
+        c, err := mongo.Connect(options.Client().ApplyURI(uri))
+        if err != nil { initErr = err; return }
+        if err = c.Ping(context.Background(), nil); err != nil { initErr = err; return }
+        client = c
+    })
+    return client, initErr
 }
 ```
 
-Usage in a route handler:
-```ts
-const db = await getDb()
-const tasks = await db.collection('tasks').find({ status: 'todo' }).toArray()
+Handlers get a collection via a shared helper on the `Handler` struct
+(`apps/server/internal/handlers/handler.go`):
+```go
+func (h *Handler) col(name string) *mongo.Collection {
+    return h.db.Collection(name)
+}
 ```
 
 ---
 
 ## Collections
 
+All document structs live in `apps/server/internal/models/models.go`. Field names below are the
+`bson` tags actually stored — every collection except `users` includes a `user_id` field, and every
+handler query filters by it (extracted from the JWT's `sub` claim). This is what makes the schema
+multi-user-safe: nothing hardcodes "the one user."
+
 ### `users`
 
-Single document. The one registered user.
-
-```ts
-interface User {
-  _id: ObjectId
-  username: string
-  passwordHash: string          // bcrypt hash
-  pushSubscriptions: PushSubscription[]
-  createdAt: Date
+```go
+type User struct {
+    ID                bson.ObjectID
+    Email             string
+    PasswordHash      string    // bcrypt
+    TOTPSecret        string
+    TOTPEnabled       bool
+    TOTPPendingSecret string    // set during setup, cleared on confirm
+    BackupCodes       []string  // bcrypt hashes, consumed on use
+    CreatedAt         time.Time
 }
 ```
 
-Indexes:
-- `{ username: 1 }` unique
+No unique index is currently created on `email` in code — uniqueness is enforced by the seed
+script's per-email existence check, not a database constraint. Multiple users are supported; there
+is no self-serve signup endpoint, only the seed command (see `docs/environment.md`).
+
+---
+
+### `push_subscriptions`
+
+```go
+type PushSubscription struct {
+    ID        bson.ObjectID
+    UserID    bson.ObjectID
+    Endpoint  string
+    P256dh    string
+    Auth      string
+    CreatedAt time.Time
+}
+```
+
+Upserted by `(user_id, endpoint)` on `POST /api/v1/push/subscribe` — re-subscribing the same
+browser updates the existing record instead of duplicating it.
 
 ---
 
 ### `contexts`
 
-Categories / life areas. Tasks belong to a context.
+Life areas / jobs. Tasks and (optionally) events belong to a context.
 
-```ts
-interface Context {
-  _id: ObjectId
-  name: string                  // e.g. "Job 1 — Acme Corp"
-  slug: string                  // e.g. "job-1-acme"
-  color: string                 // hex color for UI display
-  icon: string                  // lucide icon name
-  type: 'work' | 'personal' | 'health' | 'finance' | 'travel' | 'custom'
-  order: number                 // display order
+```go
+type Context struct {
+    ID          bson.ObjectID
+    UserID      bson.ObjectID
+    Name        string
+    Slug        string    // only ever set by the seed script today
+    Color       string
+    Icon        string
+    Type        string    // work | personal | health | finance | travel | custom — seed-only today
+    Description string
+    Order       int       // seed-only today
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
 }
 ```
 
-Indexes:
-- `{ slug: 1 }` unique
+`POST /api/v1/contexts` only accepts `name`, `description`, `color`, `icon` — `slug`, `type`, and
+`order` are set by `cmd/seed/main.go` when it creates the default contexts, but the handler doesn't
+expose them yet.
 
-Seeded contexts:
+Seeded per account (`cmd/seed/main.go`):
 ```json
 [
-  { "name": "Personal", "slug": "personal", "type": "personal", "color": "#6366f1", "icon": "user" },
-  { "name": "Health", "slug": "health", "type": "health", "color": "#22c55e", "icon": "heart" },
-  { "name": "Finance", "slug": "finance", "type": "finance", "color": "#f59e0b", "icon": "wallet" },
-  { "name": "Travel", "slug": "travel", "type": "travel", "color": "#0ea5e9", "icon": "plane" }
+  { "name": "Personal", "slug": "personal", "type": "personal", "color": "#6366f1", "icon": "user",      "order": 0 },
+  { "name": "Work",     "slug": "work",     "type": "work",     "color": "#f59e0b", "icon": "briefcase", "order": 1 },
+  { "name": "Health",   "slug": "health",   "type": "health",   "color": "#10b981", "icon": "heart",     "order": 2 }
 ]
 ```
-Work contexts are added manually per job.
 
 ---
 
 ### `tasks`
 
-The core collection. Every task lives here.
-
-```ts
-interface Task {
-  _id: ObjectId
-  title: string
-  description?: string
-  contextId: ObjectId           // reference to contexts._id
-  priority: 'low' | 'medium' | 'high' | 'urgent'
-  status: 'todo' | 'in_progress' | 'done' | 'archived'
-  deadline?: Date
-  reminderAt?: Date
-  recurrence?: 'none' | 'daily' | 'weekly' | 'monthly'
-  tags: string[]
-  notes?: string
-  createdAt: Date
-  updatedAt: Date
+```go
+type Task struct {
+    ID          bson.ObjectID
+    UserID      bson.ObjectID
+    ContextID   bson.ObjectID
+    Title       string
+    Description string
+    Priority    string     // free-form; no enum enforced in code today
+    Status      string     // created as "pending"; "done" stamps CompletedAt
+    DueDate     *time.Time
+    ReminderAt  *time.Time
+    Recurrence  string     // none | daily | weekly | monthly (not yet enforced)
+    Tags        []string
+    Notes       string
+    CompletedAt *time.Time
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
 }
 ```
 
-Indexes:
-- `{ status: 1, deadline: 1 }` — for dashboard queries (active tasks sorted by deadline)
-- `{ contextId: 1, status: 1 }` — for context-filtered views
-- `{ deadline: 1 }` — for cron notification queries
-- `{ tags: 1 }` — for tag filtering
+Note: `CreateTask` sets the initial `status` to `"pending"`. Frontend/roadmap docs describe a
+`todo | in_progress | done | archived` lifecycle — that enum isn't enforced server-side yet; `status`
+is stored as whatever string the client sends, except on creation.
 
-Common queries:
-```ts
-// Tasks due today
-const today = new Date()
-today.setHours(0, 0, 0, 0)
-const tomorrow = new Date(today)
-tomorrow.setDate(tomorrow.getDate() + 1)
+Common query patterns (all Go, run inside handlers, always filtered by `user_id`):
+```go
+// Tasks for a user, optionally filtered by status/context, sorted by due_date
+filter := bson.M{"user_id": oid}
+if status != "" { filter["status"] = status }
+if contextID != "" { filter["context_id"] = cid }
+h.col("tasks").Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "due_date", Value: 1}}))
 
-db.collection('tasks').find({
-  deadline: { $gte: today, $lt: tomorrow },
-  status: { $in: ['todo', 'in_progress'] }
-})
-
-// Overdue tasks
-db.collection('tasks').find({
-  deadline: { $lt: today },
-  status: { $in: ['todo', 'in_progress'] }
-})
-
-// Tasks by context
-db.collection('tasks').find({
-  contextId: new ObjectId(contextId),
-  status: { $ne: 'archived' }
-}).sort({ deadline: 1, priority: -1 })
+// Cron: tasks due today across all users, not done/cancelled
+bson.M{
+    "status":   bson.M{"$nin": []string{"done", "cancelled"}},
+    "due_date": bson.M{"$gte": startOfDay, "$lt": endOfDay},
+}
 ```
+
+No indexes are explicitly created in code yet — queries currently rely on collection scans plus
+whatever default `_id` index MongoDB provides. Adding `{user_id: 1, status: 1}` and
+`{user_id: 1, due_date: 1}` indexes is worth doing before real data volume arrives.
 
 ---
 
 ### `events`
 
-Calendar entries — things with a date but not necessarily a task.
-
-```ts
-interface Event {
-  _id: ObjectId
-  title: string
-  type: 'payroll' | 'vacation' | 'deadline' | 'appointment' | 'custom'
-  contextId?: ObjectId          // optional: which job/area this belongs to
-  date: Date                    // start date
-  endDate?: Date                // for multi-day events (vacations)
-  allDay: boolean
-  recurrence: 'none' | 'monthly' | 'annually'
-  notes?: string
-  createdAt: Date
+```go
+type Event struct {
+    ID          bson.ObjectID
+    UserID      bson.ObjectID
+    ContextID   *bson.ObjectID  // optional
+    Title       string
+    Type        string          // payroll | vacation | deadline | appointment | custom (not enforced)
+    Description string
+    StartTime   time.Time
+    EndTime     *time.Time
+    AllDay      bool
+    Recurrence  string          // none | monthly | annually (not enforced)
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
 }
 ```
 
-Indexes:
-- `{ date: 1 }` — for calendar range queries
-- `{ type: 1, date: 1 }` — for cron: find upcoming payroll events
-
-Common queries:
-```ts
-// Events in a date range (calendar view)
-db.collection('events').find({
-  date: { $gte: rangeStart, $lte: rangeEnd }
-}).sort({ date: 1 })
-
-// Upcoming payroll in next 2 days
-db.collection('events').find({
-  type: 'payroll',
-  date: { $gte: today, $lte: twoDaysFromNow }
-})
-```
+`ListEvents` returns all of the caller's events sorted by `start_time` ascending — there's no date
+range filter on the query params yet (Phase 3 work).
 
 ---
 
 ### `credentials`
 
-Encrypted password vault entries.
+Encrypted password vault entries. The server stores and returns ciphertext only.
 
-```ts
-interface Credential {
-  _id: ObjectId
-  site: string                  // display name, e.g. "GitHub"
-  siteUrl: string               // e.g. "https://github.com"
-  username: string              // plaintext — not sensitive
-  encryptedPassword: string     // base64 AES-GCM ciphertext
-  iv: string                    // base64 initialization vector
-  salt: string                  // base64 PBKDF2 salt
-  encryptedNotes?: string       // base64 ciphertext (optional)
-  notesIv?: string
-  tags: string[]
-  lastModified: Date
-  createdAt: Date
+```go
+type Credential struct {
+    ID            bson.ObjectID
+    UserID        bson.ObjectID
+    Site          string
+    SiteURL       string
+    Username      string    // plaintext — not sensitive
+    EncryptedData string    // base64 AES-GCM ciphertext
+    IV            string    // base64 initialization vector
+    Salt          string    // base64 PBKDF2 salt
+    Notes         string
+    Tags          []string
+    CreatedAt     time.Time
+    UpdatedAt     time.Time
 }
 ```
 
-Indexes:
-- `{ siteUrl: 1 }` — for extension domain lookup
-- `{ tags: 1 }` — for tag filtering
-
-Notes:
-- The server returns `encryptedPassword`, `iv`, `salt` as-is
-- The client decrypts using the master-derived key
-- `username` is stored plaintext so the extension can display it without decryption
-- Never add a server-side function to decrypt these — decryption is client-only
+Never add a server-side function that decrypts `EncryptedData`. Decryption is client-only (see
+`docs/security.md`).
 
 ---
 
 ### `notifications`
 
-Log of sent notifications and their read status.
+In-app notification log.
 
-```ts
-interface Notification {
-  _id: ObjectId
-  type: 'task_due' | 'task_overdue' | 'event_reminder' | 'overdue_digest'
-  refId?: ObjectId              // the task or event that triggered this
-  refType?: 'task' | 'event'
-  message: string
-  sentAt: Date
-  read: boolean
+```go
+type Notification struct {
+    ID        bson.ObjectID
+    UserID    bson.ObjectID
+    Title     string
+    Body      string
+    Read      bool
+    CreatedAt time.Time
 }
 ```
 
-Indexes:
-- `{ read: 1, sentAt: -1 }` — for unread badge and notification list
+Populated by `POST /api/v1/cron/notify` (one document per task due today) and read via
+`GET /api/v1/notifications` (50 most recent, newest first).
 
 ---
 
 ## Data Integrity Rules
 
-Since there is no ORM enforcing relationships, these rules must be handled in application code:
+There is no ORM enforcing relationships or cross-document validation. Current state, honestly:
 
-| Rule | Where enforced |
+| Rule | Enforced? |
 |---|---|
-| `tasks.contextId` must reference a valid context | Validate in API route before insert |
-| `events.contextId` must reference a valid context if provided | Validate in API route |
-| When a context is deleted, update its tasks to a "general" context | `DELETE /api/contexts/:id` handler |
-| Credentials must have `encryptedPassword`, `iv`, and `salt` | Zod schema on the API route |
+| Every query is scoped to the caller's `user_id` | Yes — in every handler, by hand |
+| `tasks.context_id` references a valid context | No — not validated on insert |
+| Deleting a context reassigns/orphans its tasks | No — `DeleteContext` does not touch `tasks` |
+| Credentials always have `encrypted_data`, `iv`, `salt` | Yes — `binding:"required"` on the Gin struct |
+
+These are worth tightening as Phase 2+ work lands, not urgent for Phase 1.
 
 ---
 
 ## Seeding
 
-On first deploy, run the seed script to create the admin user and default contexts:
+Accounts are created by the Go seed command (`apps/server/cmd/seed/main.go`), not a signup endpoint.
+It checks for an existing user **by the specific email**, not "does any user exist" — so it can be
+run multiple times to create additional accounts (see ADR-013 in `docs/technical-decisions.md`).
 
-```ts
-// scripts/seed.ts
-import { getDb } from '../lib/db'
-import bcrypt from 'bcrypt'
-
-const db = await getDb()
-
-await db.collection('users').insertOne({
-  username: process.env.SEED_USERNAME,
-  passwordHash: await bcrypt.hash(process.env.SEED_PASSWORD, 12),
-  pushSubscriptions: [],
-  createdAt: new Date()
-})
-
-// Insert default contexts...
+```bash
+cd infra
+# set SEED_EMAIL / SEED_PASSWORD in .env
+docker compose run --rm seed
 ```
 
-Run with: `bun run scripts/seed.ts`
+Required env vars: `MONGO_URI`, `SEED_EMAIL`, `SEED_PASSWORD`. Optional: `DB_NAME` (default `reliva`).
+
+Each run creates the user (bcrypt-hashed password, TOTP disabled) plus the three default contexts
+listed above.
+
+There is also a legacy `scripts/seed.ts` (Bun + Node `mongodb` driver) at the monorepo root, written
+before the Go seed command existed. It's not wired into any `package.json` script and duplicates
+`cmd/seed/main.go` — treat the Go seed command as the source of truth.

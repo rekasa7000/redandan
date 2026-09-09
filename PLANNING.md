@@ -1,7 +1,7 @@
 # Reliva — Project Planning Document
 
 > Personal Centralized Life & Tech Hub
-> Single-user. Personal. Full-fledged.
+> Multi-user by design. Personal in practice. Full-fledged.
 
 ---
 
@@ -66,7 +66,7 @@ The Go server is the **standalone API** for all clients. Every platform is a con
 ### Backend (`apps/server`)
 | Layer | Technology | Reason |
 |---|---|---|
-| Language | Go 1.23 | Performance, type safety, strong standard library |
+| Language | Go 1.25 | Performance, type safety, strong standard library |
 | Framework | Gin v1.12 | Fast HTTP router, minimal overhead |
 | Database | MongoDB native driver v2 | No ORM, flexible documents |
 | Auth | Custom JWT (golang-jwt) + TOTP (pquerna/otp) | Full control, two-step mandatory |
@@ -383,52 +383,21 @@ After the web app is stable:
 
 ## 11. Development Roadmap
 
-### Phase 1 — Foundation ✅ (In Progress)
+### Phase 1 — Foundation ✅ Complete
 - [x] Go server scaffold — all auth + CRUD endpoints
-- [x] Docker Compose infra (MongoDB + server)
+- [x] Docker Compose infra (MongoDB + server + one-shot seed service)
 - [x] OpenAPI spec (`openapi.yaml`) + TypeScript type generation
-- [ ] Next.js login page — calls Go server auth endpoints
-- [ ] Token cookie management in Next.js (`lib/token.ts`)
-- [ ] Next.js middleware — reads cookie, protects routes
-- [ ] Settings page — TOTP setup via Go server endpoints
-- [ ] Dashboard placeholder
-- [ ] `apps/server` seed script (Go or separate tool) to create the admin user
+- [x] Next.js login page — calls Go server auth endpoints (password → TOTP/backup code)
+- [x] Token cookie management in Next.js (`lib/session.ts`)
+- [x] Next.js middleware — checks cookie presence, protects routes
+- [x] Settings page — TOTP setup via Go server endpoints, change password, logout
+- [x] Dashboard placeholder (real dashboard is Phase 2)
+- [x] `apps/server/cmd/seed` — per-email seed command; supports creating more than one account (ADR-012)
 
-### Phase 2 — Task Tracker
-- [ ] Task list page — fetch from Go server
-- [ ] Create/edit task forms
-- [ ] Context sidebar
-- [ ] Dashboard: today's tasks + upcoming
-- [ ] Filtering by context, status, priority
-
-### Phase 3 — Calendar & Events
-- [ ] Calendar view (month + agenda)
-- [ ] Event create/edit
-- [ ] Tasks with deadlines on calendar
-- [ ] Recurring event support
-
-### Phase 4 — Password Vault
-- [ ] `lib/crypto.ts` — PBKDF2 + AES-GCM helpers
-- [ ] Vault list page
-- [ ] Add/view credential (encrypt before POST, decrypt on demand)
-- [ ] Master password unlock UI
-
-### Phase 5 — Notifications
-- [ ] VAPID key generation
-- [ ] Push subscription registration
-- [ ] Service worker
-- [ ] Notification bell in nav
-
-### Phase 6 — Browser Extension
-- [ ] Manifest V3 scaffold
-- [ ] Two-step auth in extension popup
-- [ ] Autofill content script
-- [ ] Quick task-add
-
-### Phase 7 — Mobile (Android)
-- [ ] Capacitor setup
-- [ ] Android build + APK
-- [ ] Native push notifications
+Full detail and remaining per-phase checklists now live in `docs/roadmap.md` — it also tracks which
+parts of each phase's backend are already done (most of it — the Go API already has full CRUD for
+tasks, contexts, events, credentials, and notifications; remaining work is almost entirely
+`apps/web` frontend). See that file instead of duplicating the checklist here.
 
 ---
 
@@ -452,6 +421,26 @@ VAPID_EMAIL=
 # URL of the Go server
 NEXT_PUBLIC_API_URL=http://localhost:8080
 ```
+
+### `infra/.env` (Docker Compose — local dev only)
+```env
+MONGO_ROOT_USER=reliva
+MONGO_ROOT_PASSWORD=
+DB_NAME=reliva
+JWT_SECRET=
+SERVER_PORT=8080
+GIN_MODE=release
+ALLOWED_ORIGINS=http://localhost:3000,https://reliva.vercel.app
+CRON_SECRET=
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_EMAIL=
+
+# Seed — creates one account per run; re-run with a different SEED_EMAIL for another account (ADR-012)
+SEED_EMAIL=
+SEED_PASSWORD=
+```
+Full reference: `docs/environment.md`.
 
 ---
 

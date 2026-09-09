@@ -18,8 +18,8 @@ Personal operating system for your life. Tasks, calendar, password vault, push n
 ```
 reliva/
   apps/
-    web/        — Next.js 16 + Auth.js  (@reliva/web, deployed to Vercel)
-    server/     — Go 1.23 + Gin         (standalone REST API, deployed to Railway/Fly.io)
+    web/        — Next.js 16, pure frontend (@reliva/web, deployed to Vercel)
+    server/     — Go 1.25 + Gin         (standalone REST API, deployed to Railway/Fly.io)
     extension/  — Manifest V3           (@reliva/extension, Phase 6)
   infra/        — docker-compose for local MongoDB + server
   docs/         — architecture, ADRs, API reference, roadmap
@@ -68,7 +68,7 @@ bun dev                # starts apps/web on http://localhost:3000
 | Web frontend | Next.js 16, React 19, TypeScript, Tailwind CSS v4, shadcn/ui |
 | Backend API | Go 1.23, Gin, MongoDB driver v2 |
 | Database | MongoDB |
-| Auth | Auth.js (web) · JWT bearer tokens (extension/mobile) · TOTP mandatory 2FA |
+| Auth | Custom JWT bearer tokens, issued by the Go server, used by every client (web, extension, mobile) · TOTP mandatory 2FA |
 | Vault encryption | Web Crypto API — PBKDF2 + AES-GCM, client-side only |
 | Push notifications | Web Push (VAPID) |
 | Deployment | Vercel (web) · Railway or Fly.io (server) |

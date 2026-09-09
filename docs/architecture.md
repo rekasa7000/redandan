@@ -1,15 +1,16 @@
 # Architecture
 
-## Core Principle: Standalone Server
+## Core Principle: Standalone Go Server
 
-The API is the single source of truth. It has no knowledge of which client is consuming it.
-The web frontend, mobile app, and browser extension are all equal clients — none receives special treatment.
+The API is a separate Go binary (`apps/server`) — the single source of truth for data and business
+logic. It has no knowledge of which client is consuming it.
 
 This means:
-- All data operations go through `/api/**` REST endpoints
-- The server never returns HTML or client-specific responses
-- Adding a new client (CLI tool, desktop app, another mobile platform) requires zero changes to the server
-- The web frontend is a React app that calls the API, just like any other client
+- All data operations go through `/api/v1/**` REST endpoints served by Gin
+- The server never returns HTML — pure JSON only
+- `apps/web` (Next.js) is a **pure frontend**: no API routes, no MongoDB access, no server-side
+  business logic. It calls the Go API exactly like any other client would
+- Adding a new client (browser extension, mobile app, CLI) requires zero changes to the server
 
 ---
 
@@ -17,37 +18,36 @@ This means:
 
 ```
                     ┌──────────────────────────────┐
-                    │      MongoDB Atlas (Cloud)    │
-                    │  users / tasks / contexts     │
-                    │  events / credentials         │
-                    │  notifications                │
+                    │   MongoDB (Docker / Atlas)    │
+                    │  users · contexts · tasks     │
+                    │  events · credentials         │
+                    │  notifications · push_subs    │
                     └──────────────┬───────────────┘
-                                   │ native mongodb driver
+                                   │ mongo-driver/v2 (native, no ORM)
                     ┌──────────────▼───────────────┐
-                    │                              │
-                    │     Reliva API (Vercel)    │
-                    │       /app/api/**            │
-                    │                              │
-                    │  Auth: Session cookie (web)  │
-                    │        Bearer token (others) │
-                    │  2FA:  TOTP required always  │
-                    │                              │
-                    └──────┬────────────┬──────────┘
+                    │      Reliva API (Go + Gin)    │
+                    │      apps/server               │
+                    │      Docker / Railway / Fly.io │
+                    │                                 │
+                    │  Auth: JWT bearer (all clients) │
+                    │  2FA: TOTP required always      │
+                    │  Owns ALL business logic + DB   │
+                    └──────┬────────────┬────────────┘
                            │            │
            ┌───────────────▼──┐   ┌─────▼────────────────────────┐
            │  Web Frontend    │   │  Bearer Token Clients         │
-           │  (Next.js React) │   │                               │
-           │                  │   │  ┌─────────────────────────┐  │
-           │  Cookie session  │   │  │  Browser Extension      │  │
-           │  Same origin     │   │  │  (Manifest V3)          │  │
-           │  Server components│  │  │  chrome.storage.local   │  │
+           │  (Next.js,       │   │                               │
+           │   Vercel)        │   │  ┌─────────────────────────┐  │
+           │                  │   │  │  Browser Extension      │  │
+           │  Pure frontend — │   │  │  (Phase 6)               │  │
+           │  no DB, no API   │   │  │  chrome.storage.local    │  │
+           │  routes. Stores  │   │  └─────────────────────────┘  │
+           │  JWT in a cookie │   │                               │
+           │  for its own use,│   │  ┌─────────────────────────┐  │
+           │  sends it as     │   │  │  Mobile (Phase 7)        │  │
+           │  Authorization:  │   │  │  Capacitor/Android       │  │
+           │  Bearer <token>  │   │  │  Secure token storage    │  │
            └──────────────────┘   │  └─────────────────────────┘  │
-                                  │                               │
-                                  │  ┌─────────────────────────┐  │
-                                  │  │  Mobile App             │  │
-                                  │  │  (Capacitor/Android)    │  │
-                                  │  │  Secure token storage   │  │
-                                  │  └─────────────────────────┘  │
                                   └───────────────────────────────┘
 ```
 
@@ -55,142 +55,146 @@ This means:
 
 ## Layers
 
-### 1. Database Layer — MongoDB Atlas
-- Cloud-hosted MongoDB (free M0 tier)
-- Connected via the official `mongodb` native driver
-- Connection is pooled via a singleton in `lib/db.ts`
-- No ORM. All queries are written directly in TypeScript
+### 1. Database Layer — MongoDB
+- Local dev: MongoDB 8 via Docker Compose (`infra/docker-compose.yml`)
+- Production: MongoDB Atlas (or any reachable MongoDB instance) via `MONGO_URI`
+- Connected via the official `go.mongodb.org/mongo-driver/v2` — no ORM
+- Singleton connection: `internal/db/db.go` connects once (`sync.Once`) and is reused by every handler
+- Every query is written directly against the driver's typed BSON API in `internal/handlers/*.go`
 
-### 2. API Layer — Next.js Route Handlers (Standalone)
-- Lives in `app/api/`
-- Every route validates the caller's identity before any logic runs
-- Accepts two authentication methods: session cookie (web) or bearer token (mobile/extension)
-- Returns pure JSON. No HTML. No redirects.
-- CORS headers configured to allow requests from trusted non-same-origin clients
-- This layer is client-agnostic — it does not know or care which frontend is calling it
+### 2. API Layer — Go + Gin (`apps/server`)
+- Entry point: `cmd/main.go` — loads config, connects Mongo, registers routes, runs with graceful
+  shutdown on `SIGINT`/`SIGTERM`
+- Routes: `internal/routes/routes.go` is the single source of truth for every endpoint and which
+  middleware protects it
+- Handlers: one file per resource in `internal/handlers/` (`auth.go`, `tasks.go`, `contexts.go`,
+  `events.go`, `credentials.go`, `notifications.go`, `cron.go`), all sharing a `Handler` struct that
+  holds the Mongo database handle and config (`internal/handlers/handler.go`)
+- Returns pure JSON. No HTML, no redirects
+- CORS is enforced per-request against `ALLOWED_ORIGINS` (`internal/middleware/cors.go`) — this layer
+  is client-agnostic and does not know or care which frontend is calling it
 
-### 3. Auth Layer — Two-Factor: Password + TOTP
-- **Step 1:** Username + password (bcrypt comparison)
-- **Step 2:** 6-digit TOTP code from an authenticator app (Google Authenticator, Authy, etc.)
-- Both factors must pass before any session or token is issued
-- TOTP is validated server-side using `otplib` against the stored secret
-- The TOTP secret is stored encrypted in the `users` collection
+### 3. Auth Layer — Two-Factor: Password + TOTP, JWT Bearer Tokens
+- **Step 1:** `POST /api/v1/auth/login` — email + password (bcrypt comparison)
+- **Step 2:** `POST /api/v1/auth/totp/validate` — 6-digit TOTP code (or a backup code), issued by
+  `github.com/pquerna/otp`
+- Every client — web, extension, mobile — authenticates the same way: a signed JWT
+  (`github.com/golang-jwt/jwt/v5`) sent as `Authorization: Bearer <token>`. There is no session store
+  and no cookie-based auth on the server side
+- Two token types, distinguished by a `type` claim and enforced by middleware
+  (`internal/middleware/auth.go`):
+  - `pending` — issued after step 1 if TOTP is enabled; 5-minute expiry; only valid on
+    `/auth/totp/validate` and `/auth/backup-code`
+  - `access` — issued after step 2 (or immediately after step 1 if TOTP isn't set up yet); 30-day
+    expiry; required on every other protected route
+- The TOTP secret and backup code hashes are stored in the `users` collection (see `docs/database.md`)
 
-Auth.js (NextAuth v5) manages the session lifecycle for the web client.
-A separate `POST /api/auth/token` endpoint issues signed JWTs for non-cookie clients (extension, mobile).
+### 4. Web Frontend Layer — Next.js (Pure Client)
+- `apps/web` has no API routes and no MongoDB driver — it is one client among several
+- Every page that touches data is a Client Component (`"use client"`) calling the Go API directly
+  with `fetch`
+- The access JWT returned by the Go server is stored in a plain (non-HttpOnly) cookie,
+  `reliva_token`, via `lib/session.ts` — set with `document.cookie` from client-side code after login
+- `middleware.ts` runs at the Next.js edge and only checks **whether** the `reliva_token` cookie is
+  present, to redirect unauthenticated requests to `/login` before any page renders. It does **not**
+  validate the JWT — that happens on the Go server on every actual data request
+- All authenticated `fetch` calls attach the token manually as `Authorization: Bearer <token>`; the
+  cookie is a Next.js-side convenience for the edge check, not an automatic transport mechanism to
+  the Go server (different origin/port in development: `:3000` vs `:8080`)
 
-### 4. Web Frontend Layer — React (App Router)
-- One of three clients of the API — not privileged over others
-- Server Components can call the DB directly as an internal optimization for the web (RSC pattern)
-- Client Components always call the API via fetch
-- Auth.js session available via `auth()` in server components and `useSession()` in client components
-- `middleware.ts` guards all `(app)` routes at the edge
+### 5. Extension Layer (Phase 6 — not started)
+- Will authenticate with the API using a bearer token stored in `chrome.storage.local`
+- Will perform the same two-step login (password → TOTP) via its own popup UI
+- Content script will detect login forms and autofill from decrypted vault credentials
 
-### 5. Extension Layer
-- Authenticates with the API using a stored bearer token (`chrome.storage.local`)
-- Performs TOTP during its own login flow (popup → API → token issued)
-- Content script detects login forms and autofills from decrypted vault credentials
-- Popup provides credential search and quick task creation
-
-### 6. Mobile Layer (Phase 7)
-- Capacitor wraps the Next.js static export
-- Authenticates using a bearer token stored in Capacitor's secure storage
-- Native push notification plugins replace web push
-- Calls the same API endpoints as the extension
+### 6. Mobile Layer (Phase 7 — not started)
+- Capacitor will wrap a static Next.js export
+- Will authenticate using a bearer token stored in Capacitor's secure storage
+- Calls the same Go API endpoints as every other client
 
 ---
 
 ## Authentication Flow (All Clients)
 
 ```
-Client submits: username + password
-  → Server: bcrypt verify password
-  → If invalid: 401
-  → If valid: prompt for TOTP
+Client submits: email + password
+  → POST /api/v1/auth/login
+  → Server: bcrypt.CompareHashAndPassword
+  → If invalid: 401 { "error": "invalid credentials" }
+  → If valid and TOTP not yet enabled: issue a 30-day access token immediately
+      (client should be routed to TOTP setup)
+  → If valid and TOTP enabled: issue a 5-minute pending token, require step 2
 
-Client submits: 6-digit TOTP code
-  → Server: otplib.totp.verify(code, secret)
-  → If invalid: 401 (with attempt counter)
-  → If valid:
-      Web client  → issue Auth.js session cookie (HttpOnly, Secure)
-      Other client → issue signed JWT bearer token (POST /api/auth/token)
+Client submits: 6-digit TOTP code (or backup code)
+  → POST /api/v1/auth/totp/validate   (Authorization: Bearer <pending token>)
+    or POST /api/v1/auth/backup-code
+  → Server: totp.Validate(code, secret) or bcrypt-compare against a stored backup code hash
+  → If invalid: 401
+  → If valid: issue a 30-day access token
 
 All subsequent requests:
-  → Web: sends session cookie automatically (browser behavior)
-  → Extension/Mobile: sends Authorization: Bearer <token> header
+  → Authorization: Bearer <access token>
+  → Every user-scoped query filters by the JWT's `sub` claim (the user's ObjectID) —
+    this is what makes the data model multi-user-safe (see ADR-013 in technical-decisions.md)
 ```
 
 ---
 
 ## Data Flow Examples
 
-### Task Creation (Web Frontend)
+### Task Creation (any client)
 ```
-User submits task form
-  → Client Component validates locally (Zod)
-  → POST /api/tasks (cookie sent automatically)
-  → Route Handler: validates session cookie via auth()
-  → Zod schema validates request body
-  → Inserts into MongoDB tasks collection
-  → Returns 201 with created task document
-  → UI updates
+Client submits task form
+  → POST /api/v1/tasks (Authorization: Bearer <token>)
+  → Go handler: middleware.RequireAuth validates the JWT, sets userID in context
+  → Handler binds + validates the JSON body (Gin's binding tags)
+  → Inserts into MongoDB tasks collection, tagged with user_id from the JWT
+  → Returns 201 with the created task document
 ```
+*The handler logic is identical for web, extension, and mobile — only the caller differs.*
 
-### Task Creation (Mobile App)
-```
-User submits task form in Capacitor app
-  → POST /api/tasks (Authorization: Bearer <token>)
-  → Route Handler: validates bearer token via lib/auth.ts validateToken()
-  → Zod schema validates request body
-  → Inserts into MongoDB tasks collection
-  → Returns 201 with created task document
-  → UI updates
-```
-*The route handler logic is identical — only the auth validation method differs.*
-
-### Password Autofill (Extension)
+### Password Autofill (Extension, Phase 6)
 ```
 User visits a login page
   → Content script detects <input type="password">
-  → Reads current tab domain
-  → GET /api/credentials?site=github.com (Authorization: Bearer <token>)
-  → Server returns encrypted ciphertext
-  → Popup decrypts client-side using master key (Web Crypto API)
+  → GET /api/v1/credentials (Authorization: Bearer <token>)
+  → Server returns encrypted ciphertext (never plaintext)
+  → Popup decrypts client-side using the master key (Web Crypto API)
   → Injects plaintext into form inputs
 ```
 
 ### Scheduled Notification
 ```
-Vercel Cron Job fires at 8:00 AM
-  → GET /api/cron/notify (Authorization: Bearer <CRON_SECRET>)
-  → Route Handler: validates CRON_SECRET header
-  → Queries tasks due today + overdue
-  → Queries events within 2 days
-  → Sends Web Push to all stored subscriptions
-  → Logs to notifications collection
+An external scheduler (Railway cron, GitHub Actions, cron container, etc.) fires
+  → POST /api/v1/cron/notify (Authorization: Bearer <CRON_SECRET>)
+  → middleware.RequireCron checks the header against CRON_SECRET (not a user JWT)
+  → Finds tasks due today across all users
+  → Inserts a notification document per task, tagged with that task's user_id
 ```
+There is no Vercel Cron involved — the Go server isn't hosted on Vercel. Only `apps/web` deploys
+there. The cron trigger is whatever scheduler sits in front of the deployed Go server.
 
 ---
 
 ## CORS Policy
 
-The API must be reachable from non-same-origin clients.
-
-| Client | Origin | Method |
+| Client | Origin | Auth |
 |---|---|---|
-| Web frontend | Same origin | Session cookie |
+| Web frontend | `http://localhost:3000` / `https://reliva.vercel.app` | Bearer token |
 | Browser extension | `chrome-extension://<id>` | Bearer token |
 | Mobile (Capacitor) | Capacitor WebView / native | Bearer token |
 
-CORS headers on all `/api/**` routes:
+CORS is handled entirely by the Go server (`internal/middleware/cors.go`), not the frontend:
 ```
-Access-Control-Allow-Origin: <whitelisted origins>
+Access-Control-Allow-Origin: <origin, if present in ALLOWED_ORIGINS>
+Access-Control-Allow-Credentials: true
 Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS
 Access-Control-Allow-Headers: Content-Type, Authorization
+Access-Control-Max-Age: 86400
 ```
-
-The allowed origins list is managed via `ALLOWED_ORIGINS` environment variable.
-The extension's origin (`chrome-extension://...`) is added after the extension is built and has a stable ID.
+`OPTIONS` preflight requests are answered with `204` and no body. The allowed origins list comes
+from the `ALLOWED_ORIGINS` env var (comma-separated). The extension's origin
+(`chrome-extension://...`) is added once the extension has a stable ID after being built.
 
 ---
 
@@ -198,24 +202,24 @@ The extension's origin (`chrome-extension://...`) is added after the extension i
 
 | Constraint | Rationale |
 |---|---|
-| Standalone API | Any client can be built without touching the server |
-| TOTP on all clients | Maximum security — single factor alone is not enough |
-| Dual auth method | Cookies for web (browser handles them); bearer tokens for extension/mobile |
-| No ORM | Direct MongoDB queries, full control |
+| Standalone Go API | Any client can be built without touching the server; `apps/web` has zero special privilege |
+| TOTP on all clients | Maximum security — a password alone is not enough |
+| Bearer JWT everywhere, no server sessions | One auth code path for web, extension, and mobile — nothing web-only to keep in sync |
+| No ORM | Direct MongoDB queries via `mongo-driver/v2`, full control |
 | Client-side crypto | Vault passwords never decryptable by the server |
-| One repo | Web + API in one Next.js project; extension in a subfolder |
+| Multi-user by design | Every document is scoped by `user_id` from the JWT; the seed script can create more than one account (see ADR-013) — the operator just doesn't expose self-serve signup |
+| One repo | `apps/server` (Go), `apps/web` (Next.js), `apps/extension` (Phase 6) share one monorepo |
 
 ---
 
 ## Deployment Architecture
 
 ```
-GitHub (main branch)
-  → Vercel auto-deploys on push
-  → Environment variables set in Vercel dashboard
-  → Vercel Cron Jobs configured in vercel.json
-  → MongoDB Atlas accessed via MONGODB_URI env var
+apps/web    → GitHub push to main → Vercel auto-deploys (Root Directory: apps/web)
+apps/server → Docker image (Dockerfile, multi-stage) → Railway or Fly.io
+              Local dev: infra/docker-compose.yml (MongoDB + server + one-shot seed service)
+MongoDB     → Atlas in production; Docker container (mongo:8) locally
 ```
 
-The extension is built separately (`bun run build:extension`) and loaded unpacked in the browser.
-The mobile APK is built locally using Android Studio + Capacitor and sideloaded.
+The extension (Phase 6) will be built separately and loaded unpacked in the browser.
+The mobile APK (Phase 7) will be built locally with Android Studio + Capacitor and sideloaded.

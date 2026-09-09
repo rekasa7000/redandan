@@ -1,184 +1,128 @@
 # Environment Variables
 
-All secrets are stored in `.env.local` locally and in Vercel's environment variables dashboard for production.
+Three separate places hold environment configuration, because `apps/server` and `apps/web` are
+deployed independently:
 
-**Never commit `.env.local` to git.** It is in `.gitignore`.
-Use `.env.example` as the committed reference with empty values.
+| File | Used by | Committed? |
+|---|---|---|
+| `apps/server/.env` | Go server, running natively (`make dev`/`make run`) | No — gitignored |
+| `apps/server/.env.example` | Reference for the above | Yes |
+| `apps/web/.env.local` | Next.js dev server | No — gitignored |
+| `apps/web/.env.example` | Reference for the above | Yes |
+| `infra/.env` | Docker Compose (mongo + server + seed) | No — gitignored |
+| `infra/.env.example` | Reference for the above | Yes |
+
+**Never commit `.env`, `.env.local`, or any file with real secrets.** Only `.env.example` files are
+committed, with empty or placeholder values.
 
 ---
 
-## Full Variable Reference
+## `apps/server` — Go API
 
-### MongoDB
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `MONGO_URI` | Yes | — | MongoDB connection string |
+| `DB_NAME` | No | `reliva` | Database name |
+| `JWT_SECRET` | Yes | — | Signs both `pending` and `access` JWTs |
+| `SERVER_PORT` | No | `8080` | HTTP listen port |
+| `ALLOWED_ORIGINS` | No | `http://localhost:3000` | Comma-separated CORS allowlist |
+| `CRON_SECRET` | No | `""` | Bearer secret protecting `POST /api/v1/cron/notify` |
+| `VAPID_PUBLIC_KEY` | No | `""` | Web Push — Phase 5 |
+| `VAPID_PRIVATE_KEY` | No | `""` | Web Push — Phase 5 |
+| `VAPID_SUBJECT` | No | `""` | Web Push contact, e.g. `mailto:you@example.com` |
+| `GIN_MODE` | No | debug if unset | Set to `release` in production (Docker sets this explicitly) |
 
-| Variable | Required | Description |
-|---|---|---|
-| `MONGODB_URI` | Yes | Full MongoDB Atlas connection string |
+`MONGO_URI` and `JWT_SECRET` are the only two hard requirements — `config.Load()` panics on startup
+if either is missing (`internal/config/config.go`).
 
-**Format:**
-```
-MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/reliva?retryWrites=true&w=majority
-```
-
-Get this from MongoDB Atlas → your cluster → Connect → Drivers → Node.js.
-
----
-
-### Auth.js
-
-| Variable | Required | Description |
-|---|---|---|
-| `AUTH_SECRET` | Yes | Signs JWT session tokens and bearer tokens. Must be long and random. |
-| `AUTH_URL` | Yes | Full URL of the deployed app (no trailing slash) |
-
-**Generate `AUTH_SECRET`:**
+**Generate secrets:**
 ```bash
-openssl rand -base64 32
+openssl rand -hex 32   # JWT_SECRET, CRON_SECRET
 ```
 
-**Values:**
-```
-AUTH_SECRET=<32+ character random string>
-AUTH_URL=https://reliva.vercel.app
-```
-
-In development:
-```
-AUTH_URL=http://localhost:3000
-```
-
-`AUTH_SECRET` is also used to encrypt the TOTP secret stored in MongoDB.
-If you rotate `AUTH_SECRET`, all existing sessions and bearer tokens are immediately invalidated,
-and the stored TOTP secret will no longer be decryptable — you will need to re-run TOTP setup.
+Rotating `JWT_SECRET` invalidates every outstanding token (pending and access) immediately —
+everyone has to log in again.
 
 ---
 
-### CORS
+## `apps/web` — Next.js
 
 | Variable | Required | Description |
 |---|---|---|
-| `ALLOWED_ORIGINS` | Yes | Comma-separated list of allowed cross-origins for the API |
+| `NEXT_PUBLIC_API_URL` | Yes | Base URL of the Go server. Local: `http://localhost:8080`. Production: your Railway/Fly.io URL |
 
-**Value:**
-```
-ALLOWED_ORIGINS=https://reliva.vercel.app,chrome-extension://<extension-id>
-```
-
-In development:
-```
-ALLOWED_ORIGINS=http://localhost:3000
-```
-
-The extension ID is stable once the extension is loaded. Get it from `chrome://extensions` and add it here.
-After updating this variable, redeploy.
+That's the entire env surface for the frontend today — there is no database URL, no auth secret, no
+NextAuth config, because `apps/web` never talks to MongoDB or signs anything. It just calls the API.
 
 ---
 
-### Push Notifications (VAPID)
+## `infra/.env` — Docker Compose
 
-| Variable | Required | Description |
-|---|---|---|
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | Phase 5 | Public key sent to browsers for push subscription |
-| `VAPID_PRIVATE_KEY` | Phase 5 | Private key used to sign push messages |
-| `VAPID_SUBJECT` | Phase 5 | Contact email for push service providers |
+Used only by `infra/docker-compose.yml` (local MongoDB + server + one-shot seed container).
 
-**Generate VAPID keys (one-time):**
-```bash
-npx web-push generate-vapid-keys
-```
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `MONGO_ROOT_USER` | No | `reliva` | Mongo container root username |
+| `MONGO_ROOT_PASSWORD` | Yes | — | Mongo container root password |
+| `DB_NAME` | No | `reliva` | Database name (shared with the server container) |
+| `JWT_SECRET` | Yes | — | Passed through to the server container |
+| `SERVER_PORT` | No | `8080` | Passed through to the server container |
+| `GIN_MODE` | No | `release` | Passed through to the server container |
+| `ALLOWED_ORIGINS` | No | `http://localhost:3000,https://reliva.vercel.app` | Passed through |
+| `CRON_SECRET` | Yes | — | Passed through to the server container |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_EMAIL` | No | `""` | Passed through — Phase 5 |
+| `SEED_EMAIL` | Yes, to seed | — | Email for the account `docker compose run --rm seed` creates |
+| `SEED_PASSWORD` | Yes, to seed | — | Password for that account |
 
-**Values:**
-```
-NEXT_PUBLIC_VAPID_PUBLIC_KEY=<base64 public key>
-VAPID_PRIVATE_KEY=<base64 private key>
-VAPID_SUBJECT=mailto:your-email@example.com
-```
+The compose file builds the Go server from `apps/server/Dockerfile` (multi-stage: `server` target
+for the API, `seed` target for the one-shot seed binary) and starts a `mongo:8` container with a
+health check gating server startup.
 
-Note the `NEXT_PUBLIC_` prefix on the public key — this makes it accessible in the browser for
-constructing the push subscription. The private key must never be exposed client-side.
-
----
-
-### Cron Security
-
-| Variable | Required | Description |
-|---|---|---|
-| `CRON_SECRET` | Phase 5 | Protects the `/api/cron/notify` endpoint |
-
-**Generate:**
-```bash
-openssl rand -base64 32
-```
-
-Vercel Cron Jobs send this automatically via `Authorization: Bearer <CRON_SECRET>` when configured in `vercel.json`.
+Re-running `docker compose run --rm seed` with a different `SEED_EMAIL` creates another account
+without touching existing ones — the seed command only skips if that specific email already exists.
 
 ---
 
-### Seed Script (Local Only)
-
-| Variable | Required | Description |
-|---|---|---|
-| `SEED_USERNAME` | Setup only | Username for the admin user |
-| `SEED_PASSWORD` | Setup only | Password for the admin user |
-
-Used only when running `bun run scripts/seed.ts`. Not needed in Vercel's environment.
-
-```
-SEED_USERNAME=your-username
-SEED_PASSWORD=your-strong-password
-```
-
----
-
-## `.env.example`
-
-```env
-# MongoDB
-MONGODB_URI=
-
-# Auth.js — also used to sign bearer tokens and encrypt the TOTP secret
-AUTH_SECRET=
-AUTH_URL=
-
-# CORS — comma-separated allowed origins for the standalone API
-ALLOWED_ORIGINS=
-
-# Push Notifications (VAPID) — added in Phase 5
-NEXT_PUBLIC_VAPID_PUBLIC_KEY=
-VAPID_PRIVATE_KEY=
-VAPID_SUBJECT=
-
-# Cron Security — added in Phase 5
-CRON_SECRET=
-
-# Seed Script (local only — not needed in Vercel)
-SEED_USERNAME=
-SEED_PASSWORD=
-```
-
----
-
-## Vercel Setup Instructions
-
-1. Go to your Vercel project → Settings → Environment Variables
-2. Add each variable (excluding `SEED_*`) for `Production` and `Preview`
-3. Redeploy after adding new variables — environment changes do not take effect until redeployment
-
----
-
-## Local Development
+## Local Development Setup
 
 ```bash
-cp .env.example .env.local
-# fill in all values
-bun dev
+# Backend + MongoDB via Docker (recommended)
+cd infra
+cp .env.example .env   # fill in MONGO_ROOT_PASSWORD, JWT_SECRET, CRON_SECRET
+docker compose up --build
+
+# Frontend
+bun install             # from monorepo root
+cp apps/web/.env.example apps/web/.env.local
+bun dev                 # http://localhost:3000
 ```
+
+Or run the Go server natively instead of Docker:
+```bash
+cd apps/server
+cp .env.example .env
+go mod tidy
+make run     # or: make dev (hot reload via air)
+```
+
+---
+
+## Production Setup
+
+- **`apps/web`** deploys to Vercel. Set `NEXT_PUBLIC_API_URL` in the Vercel dashboard
+  (Production + Preview), pointing at the deployed Go server. Root Directory: `apps/web`
+- **`apps/server`** deploys as a Docker container to Railway or Fly.io (needs a persistent process —
+  Vercel doesn't run Go). Set all required env vars in that platform's dashboard
+- **MongoDB**: point `MONGO_URI` at an Atlas cluster (or wherever Mongo is hosted) in production
 
 ---
 
 ## Security Notes
 
-- All secrets should be unique values — never reuse passwords or keys across services
-- Rotate `AUTH_SECRET` only intentionally — it invalidates all active sessions and bearer tokens
-- The TOTP secret stored in MongoDB is encrypted with `AUTH_SECRET`. Rotating the secret requires re-running TOTP setup
-- `VAPID_PRIVATE_KEY` and `CRON_SECRET` should each be independently generated
+- All secrets should be unique — never reuse a value across `JWT_SECRET` / `CRON_SECRET` / Mongo
+  passwords
+- Rotate `JWT_SECRET` only intentionally — it logs out every user immediately
+- `CRON_SECRET` and Mongo credentials should each be independently generated
+- The seeded password is the account's real password, chosen at seed time — there's no forced reset
+  flow beyond `POST /api/v1/auth/forgot-password` (which itself requires a backup code, so it's
+  useless until TOTP has been set up once)
