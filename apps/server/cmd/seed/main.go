@@ -1,5 +1,6 @@
-// Seed command — creates the single Reliva user and default contexts.
-// Run once via Docker Compose; exits immediately if a user already exists.
+// Seed command — creates a Reliva user account and default contexts.
+// Run via Docker Compose for each account to create; exits without error if
+// that specific email is already registered.
 //
 // Required env vars: MONGO_URI, SEED_EMAIL, SEED_PASSWORD
 // Optional env vars: DB_NAME (default: reliva)
@@ -44,13 +45,13 @@ func main() {
 	db    := client.Database(dbName)
 	users := db.Collection("users")
 
-	// Skip if a user already exists.
-	count, err := users.CountDocuments(ctx, bson.M{})
+	// Skip if this specific email is already registered.
+	count, err := users.CountDocuments(ctx, bson.M{"email": email})
 	if err != nil {
 		log.Fatalf("count users: %v", err)
 	}
 	if count > 0 {
-		fmt.Println("User already exists — skipping seed.")
+		fmt.Printf("User %s already exists — skipping seed.\n", email)
 		return
 	}
 
