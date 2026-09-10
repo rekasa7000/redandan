@@ -86,7 +86,7 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 	}
 	defer cursor.Close(ctx)
 
-	var notifications []models.Notification
+	notifications := []models.Notification{}
 	if err := cursor.All(ctx, &notifications); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode notifications"})
 		return

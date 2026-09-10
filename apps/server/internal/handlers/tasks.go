@@ -46,7 +46,7 @@ func (h *Handler) ListTasks(c *gin.Context) {
 	}
 	defer cursor.Close(ctx)
 
-	var tasks []models.Task
+	tasks := []models.Task{}
 	if err := cursor.All(ctx, &tasks); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode tasks"})
 		return
@@ -82,7 +82,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		UserID:      oid,
 		Title:       body.Title,
 		Description: body.Description,
-		Status:      "pending",
+		Status:      "todo",
 		Priority:    body.Priority,
 		DueDate:     body.DueDate,
 		Tags:        body.Tags,

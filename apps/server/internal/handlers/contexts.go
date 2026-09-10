@@ -31,7 +31,7 @@ func (h *Handler) ListContexts(c *gin.Context) {
 	}
 	defer cursor.Close(ctx)
 
-	var contexts []models.Context
+	contexts := []models.Context{}
 	if err := cursor.All(ctx, &contexts); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode contexts"})
 		return

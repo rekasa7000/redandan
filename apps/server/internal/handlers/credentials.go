@@ -32,7 +32,7 @@ func (h *Handler) ListCredentials(c *gin.Context) {
 	}
 	defer cursor.Close(ctx)
 
-	var credentials []models.Credential
+	credentials := []models.Credential{}
 	if err := cursor.All(ctx, &credentials); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode credentials"})
 		return
