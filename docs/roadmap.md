@@ -47,28 +47,32 @@ frontend does — posting credentials + TOTP to the same API.
 
 ---
 
-## Phase 2 — Task Tracker
+## Phase 2 — Task Tracker ✅ Complete
 
 **Goal:** Full task management across multiple contexts. All data flows through the standalone API.
 
-**Backend — already done** (built ahead of the frontend during Phase 1's Go server work):
+**Backend:**
 - [x] `apps/server/internal/handlers/contexts.go` — Contexts CRUD (`/api/v1/contexts/**`)
-- [x] `apps/server/internal/handlers/tasks.go` — Tasks CRUD with status/context filtering (`/api/v1/tasks/**`)
+- [x] `apps/server/internal/handlers/tasks.go` — Tasks CRUD with status/context filtering (`/api/v1/tasks/**`); new tasks are created with status `"todo"` (fixed from a stray `"pending"` default found during Phase 2 work)
+- [x] List handlers (`tasks`, `contexts`, `events`, `credentials`, `notifications`) initialize slices as `[]T{}` instead of `var x []T`, so empty lists serialize as JSON `[]` — Go's zero-value `nil` slice otherwise serializes as `null`, which crashed the frontend on a fresh account with zero tasks
 
-**Frontend — remaining work:**
-- [ ] `apps/web/lib/api.ts` — typed fetch wrapper around the Go API (using `lib/types.gen.ts`)
-- [ ] `apps/web/lib/validations.ts` — Zod schemas for task/context forms
-- [ ] `apps/web/app/(app)/page.tsx` — Dashboard: today's tasks + upcoming (currently a placeholder)
-- [ ] `apps/web/app/(app)/tasks/page.tsx` — Task list with context/status/priority filters
-- [ ] `apps/web/app/(app)/tasks/new/page.tsx` — Create task form
-- [ ] `apps/web/app/(app)/tasks/[id]/page.tsx` — Task detail / edit
-- [ ] `apps/web/components/tasks/task-card.tsx`
-- [ ] `apps/web/components/tasks/task-form.tsx`
-- [ ] `apps/web/components/tasks/task-filters.tsx`
-- [ ] `apps/web/components/shared/sidebar.tsx` — Context list
-- [ ] `apps/web/components/shared/bottom-nav.tsx` — Mobile bottom nav
+**Frontend:**
+- [x] `apps/web/lib/api.ts` — typed fetch wrapper around the Go API (using `lib/types.gen.ts`), coerces the `null`-vs-`[]` list response
+- [x] `apps/web/lib/validations.ts` — Zod schema for the task form
+- [x] `apps/web/lib/utils.ts` — timezone-safe date helpers (`toDateInputValue`, `fromDateInputValue`, `todayDateString`, `addDaysToDateString`); due dates are compared as `"YYYY-MM-DD"` strings, never `Date` objects, to avoid local-timezone day-boundary drift
+- [x] `apps/web/app/(app)/page.tsx` — Dashboard: Overdue / Due today / Upcoming (7-day) sections
+- [x] `apps/web/app/(app)/tasks/page.tsx` — Task list with status/context filters (reflected in the URL)
+- [x] `apps/web/app/(app)/tasks/new/page.tsx` — Create task form
+- [x] `apps/web/app/(app)/tasks/[id]/page.tsx` — Task detail / edit / delete
+- [x] `apps/web/components/tasks/task-card.tsx` — quick done-toggle, priority/status badges, context color dot
+- [x] `apps/web/components/tasks/task-form.tsx` — shared create/edit form
+- [x] `apps/web/components/tasks/task-filters.tsx`
+- [x] `apps/web/components/shared/sidebar.tsx` — nav + context list (desktop)
+- [x] `apps/web/components/shared/bottom-nav.tsx` — mobile bottom nav
 
-**Done when:** You can create a task under "Work", mark it in-progress, set a deadline, and see it on the dashboard. The same task is fetchable via `GET /api/v1/tasks` with a bearer token — that part already works today.
+**Also fixed along the way:** `openapi.yaml`'s schemas (`Context`, `Task`, `Event`, `Credential`, `Notification`) didn't match the Go handlers' actual JSON output at all — camelCase vs snake_case, `_id` vs `id`, wrong field names (`deadline` vs `due_date`), and an entirely invented `Notification` shape. Fixed and regenerated `lib/types.gen.ts` before building anything against it — see `docs/api.md` for the corrected contract.
+
+**Done when:** ✅ You can create a task under "Work", set a due date and priority, see it on the dashboard grouped by Overdue/Due today/Upcoming, toggle it done from the list, edit it, and delete it — verified end-to-end in a real browser session, not just typecheck/lint.
 
 ---
 
@@ -193,7 +197,7 @@ frontend does — posting credentials + TOTP to the same API.
 | Phase | Status |
 |---|---|
 | Phase 1 — Foundation + 2FA | ✅ Complete |
-| Phase 2 — Task Tracker | Backend done; frontend in progress |
+| Phase 2 — Task Tracker | ✅ Complete |
 | Phase 3 — Calendar & Events | Backend done; frontend not started |
 | Phase 4 — Password Vault | Backend done; frontend not started |
 | Phase 5 — Notifications | Backend partially done (no push send yet); frontend not started |
