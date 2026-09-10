@@ -174,8 +174,11 @@ components:
     # ── Context ───────────────────────────────────────────────
     Context:
       type: object
+      description: |
+        `slug`, `type`, and `order` are only ever populated by the seed command's default
+        contexts today — CreateContextRequest does not accept them yet.
       properties:
-        _id:
+        id:
           type: string
           description: MongoDB ObjectID hex string
           example: "64a1f2e3b4c5d6e7f8a9b0c1"
@@ -194,9 +197,17 @@ components:
         type:
           type: string
           enum: [work, personal, health, finance, travel, custom]
+        description:
+          type: string
         order:
           type: integer
           example: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     CreateContextRequest:
       type: object
@@ -227,7 +238,7 @@ components:
     Task:
       type: object
       properties:
-        _id:
+        id:
           type: string
           example: "64a1f2e3b4c5d6e7f8a9b0c2"
         title:
@@ -235,7 +246,7 @@ components:
           example: Submit quarterly report
         description:
           type: string
-        contextId:
+        context_id:
           type: string
           example: "64a1f2e3b4c5d6e7f8a9b0c1"
         priority:
@@ -244,11 +255,12 @@ components:
         status:
           type: string
           enum: [todo, in_progress, done, archived]
-        deadline:
+          description: New tasks are created with status "todo".
+        due_date:
           type: string
           format: date-time
           nullable: true
-        reminderAt:
+        reminder_at:
           type: string
           format: date-time
           nullable: true
@@ -261,10 +273,15 @@ components:
             type: string
         notes:
           type: string
-        createdAt:
+        completed_at:
           type: string
           format: date-time
-        updatedAt:
+          nullable: true
+          description: Set automatically when status is updated to "done".
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
           type: string
           format: date-time
 
@@ -315,34 +332,40 @@ components:
     # ── Event ─────────────────────────────────────────────────
     Event:
       type: object
+      description: |
+        `type` and `recurrence` exist on the model but CreateEventRequest does not accept them
+        yet — they're always empty/"none" today.
       properties:
-        _id:
+        id:
           type: string
           example: "64a1f2e3b4c5d6e7f8a9b0c3"
         title:
           type: string
           example: Payroll — Job 1
+        description:
+          type: string
         type:
           type: string
           enum: [payroll, vacation, deadline, appointment, custom]
-        contextId:
+        context_id:
           type: string
           nullable: true
-        date:
+        start_time:
           type: string
           format: date-time
-        endDate:
+        end_time:
           type: string
           format: date-time
           nullable: true
-        allDay:
+        all_day:
           type: boolean
         recurrence:
           type: string
           enum: [none, monthly, annually]
-        notes:
+        created_at:
           type: string
-        createdAt:
+          format: date-time
+        updated_at:
           type: string
           format: date-time
 
@@ -387,20 +410,24 @@ components:
     # The server never decrypts. All sensitive fields are AES-GCM ciphertext.
     Credential:
       type: object
+      description: |
+        `site_url` exists on the model but CreateCredentialRequest does not accept it yet —
+        it's always empty today. There is a single `notes` field, sent in plaintext by the
+        client today (not yet encrypted client-side — see docs/security.md Phase 4 status).
       properties:
-        _id:
+        id:
           type: string
           example: "64a1f2e3b4c5d6e7f8a9b0c4"
         site:
           type: string
           example: GitHub
-        siteUrl:
+        site_url:
           type: string
           example: "https://github.com"
         username:
           type: string
           example: yourhandle
-        encryptedPassword:
+        encrypted_data:
           type: string
           description: AES-GCM ciphertext, base64url encoded
         iv:
@@ -409,21 +436,16 @@ components:
         salt:
           type: string
           description: PBKDF2 salt, base64url encoded
-        encryptedNotes:
+        notes:
           type: string
-          nullable: true
-          description: Encrypted notes ciphertext, base64url encoded
-        notesIv:
-          type: string
-          nullable: true
         tags:
           type: array
           items:
             type: string
-        lastModified:
+        created_at:
           type: string
           format: date-time
-        createdAt:
+        updated_at:
           type: string
           format: date-time
 
@@ -465,26 +487,19 @@ components:
     Notification:
       type: object
       properties:
-        _id:
+        id:
           type: string
-        type:
+        title:
           type: string
-          enum: [task_due, task_overdue, event_reminder, overdue_digest]
-        refId:
+          example: Task due today
+        body:
           type: string
-          nullable: true
-          description: ObjectID of the related task or event
-        refType:
-          type: string
-          enum: [task, event]
-          nullable: true
-        message:
-          type: string
-        sentAt:
-          type: string
-          format: date-time
+          description: Currently just the task's title, set by the cron handler.
         read:
           type: boolean
+        created_at:
+          type: string
+          format: date-time
 
     # ── Push ──────────────────────────────────────────────────
     PushSubscribeRequest:

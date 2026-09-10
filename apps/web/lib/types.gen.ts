@@ -13,7 +13,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Step 1 — verify password, receive pending token */
+        /** Step 1 — verify email + password */
         post: {
             parameters: {
                 query?: never;
@@ -27,16 +27,20 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Password accepted. Use pending_token on the TOTP endpoint. */
+                /**
+                 * @description Credentials accepted.
+                 *     If `require_totp` is true, send `pending_token` to the TOTP endpoint.
+                 *     If `require_totp` is false, `token` is a full access token (TOTP setup needed).
+                 */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["PendingTokenResponse"];
+                        "application/json": components["schemas"]["LoginResponse"];
                     };
                 };
-                /** @description Missing password */
+                /** @description Missing fields */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -45,7 +49,7 @@ export interface paths {
                         "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
-                /** @description Invalid password */
+                /** @description Invalid credentials */
                 401: {
                     headers: {
                         [name: string]: unknown;
@@ -71,7 +75,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Logout (stateless — client discards token) */
+        /** Logout (stateless — client clears token cookie) */
         post: {
             parameters: {
                 query?: never;
@@ -88,6 +92,145 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["MessageResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current user profile */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MeResponse"];
+                    };
+                };
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/change-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change the authenticated user's password */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChangePasswordRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MessageResponse"];
+                    };
+                };
+                /** @description Current password incorrect */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/forgot-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset password using a backup code (no email OTP) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ForgotPasswordRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MessageResponse"];
+                    };
+                };
+                /** @description Invalid credentials or backup code */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
             };
@@ -121,13 +264,13 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description TOTP valid. Use access_token on all protected routes. */
+                /** @description TOTP valid. */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["AccessTokenResponse"];
+                        "application/json": components["schemas"]["TokenResponse"];
                     };
                 };
                 /** @description Invalid TOTP code or token */
@@ -170,13 +313,13 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Backup code accepted and burned. Returns access token. */
+                /** @description Backup code accepted and burned. */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["AccessTokenResponse"];
+                        "application/json": components["schemas"]["TokenResponse"];
                     };
                 };
                 /** @description Invalid backup code */
@@ -1141,23 +1284,50 @@ export interface components {
             message?: string;
         };
         LoginRequest: {
+            /** Format: email */
+            email: string;
             password: string;
         };
-        PendingTokenResponse: {
-            /** @description Short-lived JWT (5 min). Use on TOTP / backup-code endpoints. */
+        /**
+         * @description When TOTP is configured: `{ pending_token, require_totp: true }`.
+         *     When TOTP is not yet set up (first login): `{ token, require_totp: false }`.
+         */
+        LoginResponse: {
+            /** @description Full access token (30 days). Only present when `require_totp` is false. */
+            token?: string;
+            /** @description Short-lived JWT (5 min). Only present when `require_totp` is true. */
             pending_token?: string;
+            require_totp?: boolean;
         };
-        AccessTokenResponse: {
-            /** @description Long-lived JWT (30 days). Use as Bearer token on all protected routes. */
-            access_token?: string;
+        /** @description Full access token returned after successful TOTP or backup-code verification. */
+        TokenResponse: {
+            /** @description Long-lived JWT (30 days). Use as Bearer on all protected routes. */
+            token?: string;
+        };
+        MeResponse: {
+            email?: string;
+            totp_enabled?: boolean;
+        };
+        ChangePasswordRequest: {
+            current_password: string;
+            new_password: string;
+        };
+        ForgotPasswordRequest: {
+            /** Format: email */
+            email: string;
+            /** @description One of the 12-character hex backup codes. */
+            backup_code: string;
+            new_password: string;
         };
         TOTPCodeRequest: {
             /** @example 123456 */
             code: string;
         };
         TOTPSetupResponse: {
+            /** @description QR code as a PNG data URL (`data:image/png;base64,...`). Render directly in an <img> tag. */
+            qr?: string;
             /**
-             * @description otpauth:// URI — encode this into a QR code for the authenticator app.
+             * @description Raw otpauth:// URI — use if you need to generate a custom QR.
              * @example otpauth://totp/Reliva:user@example.com?secret=BASE32SECRET&issuer=Reliva
              */
             uri?: string;
@@ -1177,12 +1347,16 @@ export interface components {
             /** @description One of the 12-character hex backup codes. */
             code: string;
         };
+        /**
+         * @description `slug`, `type`, and `order` are only ever populated by the seed command's default
+         *     contexts today — CreateContextRequest does not accept them yet.
+         */
         Context: {
             /**
              * @description MongoDB ObjectID hex string
              * @example 64a1f2e3b4c5d6e7f8a9b0c1
              */
-            _id?: string;
+            id?: string;
             /** @example Job 1 — Company Name */
             name?: string;
             /** @example job-1 */
@@ -1193,8 +1367,13 @@ export interface components {
             icon?: string;
             /** @enum {string} */
             type?: "work" | "personal" | "health" | "finance" | "travel" | "custom";
+            description?: string;
             /** @example 0 */
             order?: number;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
         };
         CreateContextRequest: {
             name: string;
@@ -1210,28 +1389,36 @@ export interface components {
         };
         Task: {
             /** @example 64a1f2e3b4c5d6e7f8a9b0c2 */
-            _id?: string;
+            id?: string;
             /** @example Submit quarterly report */
             title?: string;
             description?: string;
             /** @example 64a1f2e3b4c5d6e7f8a9b0c1 */
-            contextId?: string;
+            context_id?: string;
             /** @enum {string} */
             priority?: "low" | "medium" | "high" | "urgent";
-            /** @enum {string} */
+            /**
+             * @description New tasks are created with status "todo".
+             * @enum {string}
+             */
             status?: "todo" | "in_progress" | "done" | "archived";
             /** Format: date-time */
-            deadline?: string | null;
+            due_date?: string | null;
             /** Format: date-time */
-            reminderAt?: string | null;
+            reminder_at?: string | null;
             /** @enum {string} */
             recurrence?: "none" | "daily" | "weekly" | "monthly";
             tags?: string[];
             notes?: string;
+            /**
+             * Format: date-time
+             * @description Set automatically when status is updated to "done".
+             */
+            completed_at?: string | null;
             /** Format: date-time */
-            createdAt?: string;
+            created_at?: string;
             /** Format: date-time */
-            updatedAt?: string;
+            updated_at?: string;
         };
         CreateTaskRequest: {
             title: string;
@@ -1255,24 +1442,30 @@ export interface components {
             tags?: string[];
             context_id?: string;
         };
+        /**
+         * @description `type` and `recurrence` exist on the model but CreateEventRequest does not accept them
+         *     yet — they're always empty/"none" today.
+         */
         Event: {
             /** @example 64a1f2e3b4c5d6e7f8a9b0c3 */
-            _id?: string;
+            id?: string;
             /** @example Payroll — Job 1 */
             title?: string;
+            description?: string;
             /** @enum {string} */
             type?: "payroll" | "vacation" | "deadline" | "appointment" | "custom";
-            contextId?: string | null;
+            context_id?: string | null;
             /** Format: date-time */
-            date?: string;
+            start_time?: string;
             /** Format: date-time */
-            endDate?: string | null;
-            allDay?: boolean;
+            end_time?: string | null;
+            all_day?: boolean;
             /** @enum {string} */
             recurrence?: "none" | "monthly" | "annually";
-            notes?: string;
             /** Format: date-time */
-            createdAt?: string;
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
         };
         CreateEventRequest: {
             title: string;
@@ -1294,29 +1487,32 @@ export interface components {
             all_day?: boolean;
             context_id?: string;
         };
+        /**
+         * @description `site_url` exists on the model but CreateCredentialRequest does not accept it yet —
+         *     it's always empty today. There is a single `notes` field, sent in plaintext by the
+         *     client today (not yet encrypted client-side — see docs/security.md Phase 4 status).
+         */
         Credential: {
             /** @example 64a1f2e3b4c5d6e7f8a9b0c4 */
-            _id?: string;
+            id?: string;
             /** @example GitHub */
             site?: string;
             /** @example https://github.com */
-            siteUrl?: string;
+            site_url?: string;
             /** @example yourhandle */
             username?: string;
             /** @description AES-GCM ciphertext, base64url encoded */
-            encryptedPassword?: string;
+            encrypted_data?: string;
             /** @description AES-GCM IV, base64url encoded */
             iv?: string;
             /** @description PBKDF2 salt, base64url encoded */
             salt?: string;
-            /** @description Encrypted notes ciphertext, base64url encoded */
-            encryptedNotes?: string | null;
-            notesIv?: string | null;
+            notes?: string;
             tags?: string[];
             /** Format: date-time */
-            lastModified?: string;
+            created_at?: string;
             /** Format: date-time */
-            createdAt?: string;
+            updated_at?: string;
         };
         CreateCredentialRequest: {
             site: string;
@@ -1336,17 +1532,14 @@ export interface components {
             notes?: string;
         };
         Notification: {
-            _id?: string;
-            /** @enum {string} */
-            type?: "task_due" | "task_overdue" | "event_reminder" | "overdue_digest";
-            /** @description ObjectID of the related task or event */
-            refId?: string | null;
-            /** @enum {string|null} */
-            refType?: "task" | "event" | null;
-            message?: string;
-            /** Format: date-time */
-            sentAt?: string;
+            id?: string;
+            /** @example Task due today */
+            title?: string;
+            /** @description Currently just the task's title, set by the cron handler. */
+            body?: string;
             read?: boolean;
+            /** Format: date-time */
+            created_at?: string;
         };
         PushSubscribeRequest: {
             /** @description Browser-provided push endpoint URL */
